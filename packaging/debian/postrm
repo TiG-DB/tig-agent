@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# the TiG repository in /var/lib/tig is the machine's history, so it is kept even on purge
+if [ "$1" = purge ]; then
+  rm -rf /var/cache/tig-agent /var/lib/tig-agent-update
+fi
+if [ -d /run/systemd/system ]; then
+  systemctl daemon-reload || true
+fi

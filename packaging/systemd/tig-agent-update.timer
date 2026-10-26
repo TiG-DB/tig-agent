@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for tig-agent releases every few minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+RandomizedDelaySec=15s
+
+[Install]
+WantedBy=timers.target

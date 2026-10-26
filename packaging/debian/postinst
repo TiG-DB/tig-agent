@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+  if ! getent passwd tig >/dev/null; then
+    adduser --system --group --home /var/lib/tig --no-create-home --quiet tig
+  fi
+  install -d -o tig -g tig -m 0750 /var/lib/tig
+  install -d -m 0700 /var/cache/tig-agent /var/lib/tig-agent-update
+
+  if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload
+    systemctl enable tig-agentd.service tig-agent-update.timer
+    # never restart tig-agent-update.service here: it may be the one installing this package
+    systemctl restart tig-agentd.service
+    systemctl start tig-agent-update.timer
+  fi
+fi

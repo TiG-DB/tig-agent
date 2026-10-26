@@ -1,0 +1,33 @@
+[Unit]
+Description=TiG agent: records this machine's timeline
+Documentation=https://github.com/jchown/tig-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tig
+Group=tig
+Environment=HOME=/var/lib/tig
+ExecStart=/usr/bin/tig-agent daemon
+Restart=on-failure
+RestartSec=30s
+
+StateDirectory=tig
+StateDirectoryMode=0750
+UMask=0027
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

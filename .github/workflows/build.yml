@@ -1,0 +1,96 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # built against Ubuntu 22.04's glibc, so the package runs on Ubuntu 22.04+ and Debian 12+
+    container: ubuntu:22.04
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+            build-essential cmake git openssh-client ca-certificates dpkg-dev file
+
+      - uses: actions/checkout@v4
+
+      # tig-lib is private, so it is fetched with a read-only deploy key rather than the workflow token
+      - name: Fetch tig-lib
+        env:
+          TIG_LIB_DEPLOY_KEY: ${{ secrets.TIG_LIB_DEPLOY_KEY }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          key=$(mktemp)
+          printf '%s\n' "$TIG_LIB_DEPLOY_KEY" >"$key"
+          git -c core.sshCommand="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            submodule update --init external/tig-lib
+          rm -f "$key"
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DTIG_AGENT_VERSION_SUFFIX="+${{ github.run_number }}.${GITHUB_SHA::7}"
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: cd build && cpack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: build/*.deb
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: dist
+
+      - name: Sign
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          key=$(mktemp)
+          printf '%s\n' "$RELEASE_SIGNING_KEY" >"$key"
+          cd dist
+          sha256sum *.deb >SHA256SUMS
+          ssh-keygen -q -Y sign -f "$key" -n tig-agent-release SHA256SUMS
+          rm -f "$key"
+          # the same check the updater makes on the server
+          ssh-keygen -Y verify -f ../packaging/release-signers -I tig-agent-release -n tig-agent-release \
+            -s SHA256SUMS.sig <SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          version=$(dpkg-deb -f dist/*.deb Version)
+          gh release create "build-${{ github.run_number }}" dist/*.deb dist/SHA256SUMS dist/SHA256SUMS.sig \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$version" --latest \
+            --notes "Built from ${GITHUB_SHA::7}: $COMMIT_MESSAGE"

@@ -1,0 +1,93 @@
+#!/bin/bash
+# Installs the latest tig-agent release from GitHub, and rolls back if it fails its health check.
+# Run by tig-agent-update.timer; GITHUB_TOKEN comes from /etc/tig-agent/update.env.
+set -euo pipefail
+
+repo=${TIG_AGENT_RELEASE_REPO:-jchown/tig-agent}
+signers=/usr/share/tig-agent/release-signers
+cache=/var/cache/tig-agent
+state=/var/lib/tig-agent-update
+api=https://api.github.com/repos/$repo
+health_delay=${TIG_AGENT_HEALTH_DELAY:-30}
+
+log() {
+  echo "$*" >&2
+}
+
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+  log "GITHUB_TOKEN is not set: add a read-only token for $repo to /etc/tig-agent/update.env"
+  exit 1
+fi
+
+github() {
+  curl --fail --silent --show-error --location --max-time 120 \
+    -H "Authorization: Bearer $GITHUB_TOKEN" -H "X-GitHub-Api-Version: 2022-11-28" "$@"
+}
+
+# a release's title is the package version, e.g. 0.1.0+42.1a2b3c4
+release=$(github "$api/releases/latest")
+version=$(jq -r '.name' <<<"$release")
+current=$(dpkg-query -W -f='${Version}' tig-agent 2>/dev/null || echo 0)
+arch=$(dpkg --print-architecture)
+
+if ! dpkg --compare-versions "$version" gt "$current"; then
+  exit 0
+fi
+if grep -qxF "$version" "$state/bad-versions" 2>/dev/null; then
+  exit 0
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+download() {
+  local id
+  id=$(jq -r --arg name "$1" '.assets[] | select(.name == $name) | .id' <<<"$release")
+  if [ -z "$id" ]; then
+    log "release $version has no $1"
+    exit 1
+  fi
+  github -H "Accept: application/octet-stream" -o "$work/$1" "$api/releases/assets/$id"
+}
+
+deb=tig-agent_${version}_${arch}.deb
+download SHA256SUMS
+download SHA256SUMS.sig
+download "$deb"
+
+# SHA256SUMS is signed in CI with the release key; the public key ships in the package that is already installed
+ssh-keygen -Y verify -f "$signers" -I tig-agent-release -n tig-agent-release \
+  -s "$work/SHA256SUMS.sig" <"$work/SHA256SUMS" >/dev/null
+sums=$(awk -v name="$deb" '$2 == name' "$work/SHA256SUMS")
+if [ -z "$sums" ]; then
+  log "SHA256SUMS does not list $deb"
+  exit 1
+fi
+(cd "$work" && sha256sum --check --strict --quiet <<<"$sums")
+
+healthy() {
+  sleep "$health_delay"
+  systemctl is-active --quiet tig-agentd.service && runuser -u tig -- tig-agent status >/dev/null
+}
+
+log "updating tig-agent $current -> $version"
+previous=$(ls "$cache"/tig-agent_*.deb 2>/dev/null | head -n 1 || true)
+
+if dpkg -i "$work/$deb" && healthy; then
+  rm -f "$cache"/tig-agent_*.deb
+  cp "$work/$deb" "$cache/"
+  log "tig-agent $version installed"
+  exit 0
+fi
+
+log "tig-agent $version failed its health check, and won't be tried again"
+echo "$version" >>"$state/bad-versions"
+journalctl -u tig-agentd.service -n 20 --no-pager >&2 || true
+
+if [ -n "$previous" ]; then
+  log "rolling back to $(basename "$previous")"
+  dpkg -i "$previous"
+else
+  log "no earlier package is cached, so there is nothing to roll back to"
+fi
+exit 1

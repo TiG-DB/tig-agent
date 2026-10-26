@@ -1,0 +1,10 @@
+[Unit]
+Description=Install the latest tig-agent release
+Documentation=https://github.com/jchown/tig-agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/tig-agent/update.env
+ExecStart=/usr/libexec/tig-agent/tig-agent-update
