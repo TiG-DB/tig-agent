@@ -14,6 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     # built against Ubuntu 22.04's glibc, so the package runs on Ubuntu 22.04+ and Debian 12+
     container: ubuntu:22.04
+    # the container's default shell is dash, which lacks the ${var::n} substring syntax used below
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Install build tools
         run: |
