@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # built against Ubuntu 22.04's glibc, so the package runs on Ubuntu 22.04+ and Debian 12+
     container: ubuntu:22.04
     # the container's default shell is dash, which lacks the ${var::n} substring syntax used below
@@ -25,7 +25,7 @@ jobs:
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
             build-essential cmake git openssh-client ca-certificates dpkg-dev file
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # tig-lib is private, so it is fetched with a read-only deploy key rather than the workflow token
       - name: Fetch tig-lib
@@ -53,7 +53,7 @@ jobs:
       - name: Package
         run: cd build && cpack
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deb
           path: build/*.deb
@@ -62,15 +62,15 @@ jobs:
   release:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     concurrency:
       group: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: deb
           path: dist
