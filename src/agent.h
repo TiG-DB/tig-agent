@@ -58,9 +58,21 @@ void agent_log_error(const char *format, ...);
 int agent_run(const char *const *argv, const char *const *env, char *output, size_t output_size,
               int timeout_seconds);
 
-/* repository.c */
+typedef struct agent_device {
+  char key_path[AGENT_PATH_MAX];
+  char work_dir[AGENT_PATH_MAX]; /* for the files ssh-keygen signs */
+  char fingerprint[128];         /* SHA256:..., as ssh-keygen -l prints it */
+  char allowed_signer[1024];     /* the key's line in .tig/allowed_signers */
+  tig_device device;             /* signs through ssh-keygen; points into this struct */
+} agent_device;
+
+/* device.c */
+int agent_create_device_key(const char *path);
+int agent_device_load(const agent_config *config, agent_device *device);
+
+/* repository.c: with a device, commits are signed, and unsigned history gains the key first */
 int  agent_setup(const agent_config *config);
-int  agent_open(const agent_config *config, tig_repository **out);
+int  agent_open(const agent_config *config, agent_device *device, tig_repository **out);
 int  agent_lock(const agent_config *config);
 void agent_unlock(int lock);
 

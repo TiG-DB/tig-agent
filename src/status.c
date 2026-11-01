@@ -95,16 +95,20 @@ int agent_status_print(const agent_config *config) {
   char key_path[AGENT_PATH_MAX];
   char head[512];
   agent_status status;
+  agent_device device;
+  int have_device;
   tig_repository *repository;
 
   if (agent_path(repository_path, sizeof(repository_path), config, "repository") != 0 ||
       agent_path(key_path, sizeof(key_path), config, "keys/deploy_ed25519.pub") != 0) {
     return AGENT_EXIT_ERROR;
   }
-  if (agent_open(config, &repository) != 0) {
+  /* read only: opening with the device could commit the key to unsigned history */
+  if (agent_open(config, 0, &repository) != 0) {
     return AGENT_EXIT_ERROR;
   }
   tig_repository_close(repository);
+  have_device = agent_device_load(config, &device) == 0;
   agent_status_load(config, &status);
 
   {
@@ -125,6 +129,7 @@ int agent_status_print(const agent_config *config) {
     printf("%-14s%s%s\n", "push result", status.last_push_result,
            strcmp(status.last_push_result, "rejected") == 0 ? " (paused: run `tig-agent push` once resolved)" : "");
   }
+  printf("%-14s%s\n", "device", have_device ? device.fingerprint : "(missing: run tig-agent init)");
   agent_print_file("deploy key", key_path);
   return AGENT_EXIT_OK;
 }

@@ -38,8 +38,15 @@ interval and commits simply wait locally.
 **Its own deploy key.** On first run the agent creates an Ed25519 key in `/var/lib/tig/keys/` (mode 0700) and pushes with
 `IdentitiesOnly`, `BatchMode` and its own `known_hosts`, so it never prompts, never uses anyone else's keys and pins the remote's
 host key on first use. The key is scoped to one remote, e.g. as a GitHub deploy key on one repository. It is deliberately
-separate from the *device key* that will sign commits (see [Not yet implemented](#not-yet-implemented)), so the device's
-identity doesn't depend on access to any particular host.
+separate from the device key, so the device's identity doesn't depend on access to any particular host.
+
+**Every commit is signed by the device key.** The agent also creates `keys/device_ed25519`, the device's permanent,
+pseudonymous identity (see [`COMMITS.md`](https://github.com/jchown/tig-docs/blob/main/COMMITS.md), "Device keys"). The
+repository's first commit lists it in `.tig/allowed_signers`, and the agent signs each commit through `ssh-keygen -Y sign -n
+git`, so anyone with a clone can run `git -c gpg.ssh.allowedSignersFile=.tig/allowed_signers log --show-signature`. A
+repository made by an earlier, unsigned agent gains the file in a signed "Add device key" commit at the next commit; the history
+before it stays unsigned. Losing the device key means starting a new repository, because the agent won't sign with a key the
+file doesn't list.
 
 **The config file is the source of truth.** `/etc/tig-agent/agent.conf` names the remote, and the agent makes the repository's
 `origin` match it at start-up and before each push. Removing the remote keeps the repository local.
@@ -68,7 +75,7 @@ that can't provide one (e.g. macOS during development) leaves nothing behind.
 /etc/tig-agent/agent.conf        configuration (a dpkg conffile, so upgrades keep your edits)
 /etc/tig-agent/update.env        GITHUB_TOKEN for the updater (you create this)
 /var/lib/tig/repository/         the TiG repository
-/var/lib/tig/keys/               deploy key and pinned known_hosts
+/var/lib/tig/keys/               device key, deploy key and pinned known_hosts
 /var/lib/tig/agent.status        last sample, commit and push, and the last push result
 /var/cache/tig-agent/            the installed .deb, kept for rollback
 /var/lib/tig-agent-update/       versions that failed their health check
@@ -200,6 +207,7 @@ src/
   telemetry.c    the streams and their samplers
   sync.c         origin and `git push`
   repository.c   first-run setup, deploy key, lock
+  device.c       device key and commit signing through ssh-keygen
   status.c       status file and `tig-agent status`
   config.c       configuration file
   process.c      running git and ssh-keygen with a timeout
@@ -212,11 +220,8 @@ tests/           config_test.c and end_to_end.sh
 
 These are needed before the agent follows the TiG spec in full. Most of the work is in `tig-lib`.
 
-- **Signed commits.** [`COMMITS.md`](https://github.com/jchown/tig-docs/blob/main/COMMITS.md) requires every commit to be
-  signed with the device key, published in `.tig/allowed_signers`. The plan is a signing callback on `tig_repository_commit`
-  that the agent implements with `ssh-keygen -Y sign`, keeping crypto out of the library.
 - **State and events.** `tig_repository_commit` only stages `/telemetry`, so the agent can't yet record its initial state
   snapshot (CPU, memory, disks, OS, packages) or events (package installed, OS upgraded, disk replaced).
-- **TiG Notary.** No signature tags yet, so the repository proves which device wrote it (once commits are signed) but not when.
+- **TiG Notary.** No signature tags yet, so the repository proves which device wrote it but not when.
   When it arrives, the push must include `refs/tags/tig/sig/*`.
 - **TiG clock.** Readings use the system clock, without the notary offset.

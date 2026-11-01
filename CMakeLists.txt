@@ -54,6 +54,7 @@ add_library(
   src/sync.c
   src/telemetry.c
   src/daemon.c
+  src/device.c
 )
 target_include_directories(tig-agent-core PUBLIC src)
 target_link_libraries(tig-agent-core PUBLIC tig::tig)

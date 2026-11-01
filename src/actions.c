@@ -14,7 +14,7 @@ int agent_collect(const agent_config *config) {
   if (lock < 0) {
     return -1;
   }
-  if (agent_open(config, &repository) != 0) {
+  if (agent_open(config, 0, &repository) != 0) {
     agent_unlock(lock);
     return -1;
   }
@@ -32,10 +32,11 @@ int agent_collect(const agent_config *config) {
 
 static int agent_commit_locked(const agent_config *config) {
   tig_repository *repository;
+  agent_device device;
   agent_status status;
   tig_status committed;
 
-  if (agent_open(config, &repository) != 0) {
+  if (agent_open(config, &device, &repository) != 0) {
     return -1;
   }
   committed = tig_repository_commit(repository, "Record telemetry");

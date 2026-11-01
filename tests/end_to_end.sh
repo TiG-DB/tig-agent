@@ -31,6 +31,16 @@ git -C "$work/remote.git" ls-tree -r --name-only main | grep -qx 'telemetry/syst
   fail "system.load stream not pushed"
 run status | grep -q '^push result *ok$' || fail "status does not show a successful push"
 
+# every commit is signed by the device key, which the first commit lists in .tig/allowed_signers
+signers=$work/data/repository/.tig/allowed_signers
+fingerprint=$(ssh-keygen -l -E sha256 -f "$work/data/keys/device_ed25519.pub" | cut -d' ' -f2)
+grep -qF "$fingerprint namespaces=\"git\" ssh-ed25519 " "$signers" || fail "allowed_signers does not list the device key"
+git -C "$work/remote.git" show --format= --name-only "$(git -C "$work/remote.git" rev-list --max-parents=0 main)" |
+  grep -qx .tig/allowed_signers || fail "the first commit does not add .tig/allowed_signers"
+unsigned=$(git -C "$work/remote.git" -c gpg.ssh.allowedSignersFile="$signers" log --format=%G? main | grep -cvx G || true)
+[ "$unsigned" -eq 0 ] || fail "$unsigned commit(s) without a good device signature"
+run status | grep -qF "device        $fingerprint" || fail "status does not show the device"
+
 # a second run appends to the same chunk and fast-forwards the remote
 sleep 1
 run collect
@@ -52,5 +62,19 @@ run push 2>"$work/push.err" || status=$?
 grep -q 'rejected' "$work/push.err" || fail "rejected push not reported"
 [ "$(git -C "$work/remote.git" rev-parse main)" = "$diverged" ] || fail "the remote was overwritten"
 run status | grep -q '^push result *rejected' || fail "status does not show the rejected push"
+
+# a repository with unsigned history, as earlier agents made, gains the device key in a signed commit
+legacy=$work/legacy/repository
+git init -q "$legacy"
+mkdir "$legacy/telemetry" && touch "$legacy/telemetry/.gitkeep"
+git -C "$legacy" add -A
+git -C "$legacy" -c user.name=Old -c user.email=old@example.com commit -q -m "Create TiG repository"
+printf 'data_dir = %s\n' "$work/legacy" >"$work/legacy.conf"
+"$agent" --config "$work/legacy.conf" init >/dev/null
+"$agent" --config "$work/legacy.conf" collect
+"$agent" --config "$work/legacy.conf" commit
+history=$(git -C "$legacy" -c gpg.ssh.allowedSignersFile="$legacy/.tig/allowed_signers" log --format='%G? %s' | tr '\n' '|')
+[ "$history" = "G Record telemetry|G Add device key|N Create TiG repository|" ] ||
+  fail "unexpected legacy history: $history"
 
 echo "end to end: ok"
