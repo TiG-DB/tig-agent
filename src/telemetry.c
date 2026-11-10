@@ -31,51 +31,29 @@ static int agent_sample_load(agent_values values) {
   return 0;
 }
 
-static int agent_sample_uptime(agent_values values) {
-  FILE *file = fopen("/proc/uptime", "r");
-  double uptime;
-  int found;
-
-  if (file == 0) {
-    return -1;
-  }
-  found = fscanf(file, "%lf", &uptime) == 1;
-  fclose(file);
-  if (!found) {
-    return -1;
-  }
-
-  snprintf(values[0], AGENT_VALUE_MAX, "%.0f", uptime);
-  return 0;
-}
-
+/* capacities are state, not telemetry, so only what is in use is sampled (DEVICE.md, "Telemetry") */
 static int agent_sample_memory(agent_values values) {
   FILE *file = fopen("/proc/meminfo", "r");
   char line[256];
-  unsigned long long total_kb = 0;
   unsigned long long available_kb = 0;
   int found = 0;
 
   if (file == 0) {
     return -1;
   }
-  while (fgets(line, sizeof(line), file) != 0) {
-    if (sscanf(line, "MemTotal: %llu kB", &total_kb) == 1 ||
-        sscanf(line, "MemAvailable: %llu kB", &available_kb) == 1) {
-      ++found;
-    }
+  while (!found && fgets(line, sizeof(line), file) != 0) {
+    found = sscanf(line, "MemAvailable: %llu kB", &available_kb) == 1;
   }
   fclose(file);
-  if (found != 2) {
+  if (!found) {
     return -1;
   }
 
-  snprintf(values[0], AGENT_VALUE_MAX, "%llu", total_kb * 1024);
-  snprintf(values[1], AGENT_VALUE_MAX, "%llu", available_kb * 1024);
+  snprintf(values[0], AGENT_VALUE_MAX, "%llu", available_kb * 1024);
   return 0;
 }
 
-static int agent_sample_disk_root(agent_values values) {
+static int agent_sample_filesystem_root(agent_values values) {
   struct statvfs fs;
   unsigned long long block;
 
@@ -84,32 +62,27 @@ static int agent_sample_disk_root(agent_values values) {
   }
   block = fs.f_frsize;
 
-  snprintf(values[0], AGENT_VALUE_MAX, "%llu", (unsigned long long)fs.f_blocks * block);
-  snprintf(values[1], AGENT_VALUE_MAX, "%llu", (unsigned long long)(fs.f_blocks - fs.f_bfree) * block);
-  snprintf(values[2], AGENT_VALUE_MAX, "%llu", (unsigned long long)fs.f_bavail * block);
+  snprintf(values[0], AGENT_VALUE_MAX, "%llu", (unsigned long long)(fs.f_blocks - fs.f_bfree) * block);
+  snprintf(values[1], AGENT_VALUE_MAX, "%llu", (unsigned long long)fs.f_bavail * block);
   return 0;
 }
 
 static const tig_column agent_load_columns[] = {
     {"load1", TIG_VALUE_DECIMAL}, {"load5", TIG_VALUE_DECIMAL}, {"load15", TIG_VALUE_DECIMAL}};
-static const tig_column agent_uptime_columns[] = {{"value", TIG_VALUE_INTEGER}};
-static const tig_column agent_memory_columns[] = {{"total", TIG_VALUE_INTEGER}, {"available", TIG_VALUE_INTEGER}};
-static const tig_column agent_disk_columns[] = {
-    {"size", TIG_VALUE_INTEGER}, {"used", TIG_VALUE_INTEGER}, {"available", TIG_VALUE_INTEGER}};
+static const tig_column agent_memory_columns[] = {{"available", TIG_VALUE_INTEGER}};
+static const tig_column agent_filesystem_columns[] = {{"used", TIG_VALUE_INTEGER}, {"available", TIG_VALUE_INTEGER}};
 
+/* stream names from tig-docs/vocabularies/DEVICE.md, "Telemetry" */
 static const agent_stream agent_streams[] = {
     {"system.load",
      {"Load average over 1, 5 and 15 minutes", 0, agent_load_columns, 3, TIG_CHUNK_DAY, 5 * AGENT_MINUTE_MS},
      agent_sample_load},
-    {"system.uptime",
-     {"Time since boot", "seconds", agent_uptime_columns, 1, TIG_CHUNK_DAY, 5 * AGENT_MINUTE_MS},
-     agent_sample_uptime},
     {"memory",
-     {"Physical memory", "bytes", agent_memory_columns, 2, TIG_CHUNK_DAY, 5 * AGENT_MINUTE_MS},
+     {"Physical memory available", "bytes", agent_memory_columns, 1, TIG_CHUNK_DAY, 5 * AGENT_MINUTE_MS},
      agent_sample_memory},
-    {"disk.root",
-     {"Space on the root filesystem", "bytes", agent_disk_columns, 3, TIG_CHUNK_DAY, 5 * AGENT_MINUTE_MS},
-     agent_sample_disk_root},
+    {"filesystem.root",
+     {"Space on the root filesystem", "bytes", agent_filesystem_columns, 2, TIG_CHUNK_DAY, 5 * AGENT_MINUTE_MS},
+     agent_sample_filesystem_root},
 };
 
 #define AGENT_STREAM_COUNT (sizeof(agent_streams) / sizeof(agent_streams[0]))
