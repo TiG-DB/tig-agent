@@ -14,9 +14,9 @@ static void agent_usage(FILE *out) {
         "Records this machine's timeline into a TiG repository.\n"
         "\n"
         "Commands:\n"
-        "  init      create the data directory, TiG repository, device key and deploy key\n"
+        "  init      create the data directory, TiG repository, device key and deploy key, and record the device\n"
         "  collect   sample telemetry once\n"
-        "  commit    commit readings sampled since the last commit\n"
+        "  commit    record changes to the device, then commit them and readings sampled since the last commit\n"
         "  push      commit, then push to the configured remote (resumes after a rejected push)\n"
         "  status    show the repository, recent activity, device and deploy key\n"
         "  daemon    sample, commit and push on the configured intervals\n"
@@ -37,7 +37,8 @@ static void agent_print_version(void) {
 
 static int agent_command(const char *command, const agent_config *config) {
   if (strcmp(command, "init") == 0) {
-    if (agent_setup(config) != 0) {
+    /* records the device straight away: its initial state, discovery and boot */
+    if (agent_setup(config) != 0 || agent_commit(config) != 0) {
       return AGENT_EXIT_ERROR;
     }
     return agent_status_print(config);

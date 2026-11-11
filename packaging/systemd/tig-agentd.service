@@ -17,7 +17,8 @@ StateDirectory=tig
 StateDirectoryMode=0750
 UMask=0027
 ProtectSystem=strict
-ProtectHome=yes
+# read-only rather than hidden, so that a filesystem mounted at /home can be measured like any other
+ProtectHome=read-only
 PrivateTmp=yes
 PrivateDevices=yes
 NoNewPrivileges=yes

@@ -8,6 +8,13 @@ if [ "$1" = configure ]; then
   install -d -o tig -g tig -m 0750 /var/lib/tig
   install -d -m 0700 /var/cache/tig-agent /var/lib/tig-agent-update
 
+  # the device's serial number is part of its identity, but only root can read it, so keep a copy for the agent
+  serial=$(head -c 256 /sys/class/dmi/id/product_serial 2>/dev/null || true)
+  if [ -n "$serial" ]; then
+    install -m 0640 -o root -g tig /dev/null /etc/tig-agent/product_serial
+    printf '%s\n' "$serial" >/etc/tig-agent/product_serial
+  fi
+
   if [ -d /run/systemd/system ]; then
     systemctl daemon-reload
     systemctl enable tig-agentd.service tig-agent-update.timer

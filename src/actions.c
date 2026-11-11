@@ -1,5 +1,6 @@
 #include "agent.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -30,6 +31,38 @@ int agent_collect(const agent_config *config) {
   return result;
 }
 
+/* compares the device with its state, recording what changed and any boot not yet recorded */
+static int agent_observe(const agent_config *config, tig_repository *repository) {
+  agent_observation observation;
+  agent_status status;
+  int result;
+
+  memset(&observation, 0, sizeof(observation));
+  if (tig_clock_now(repository, &observation.now_ms) != TIG_OK) {
+    agent_log_error("cannot read the TiG clock: %s", tig_get_last_error());
+    return -1;
+  }
+  if (agent_inventory_read(&observation.inventory) != 0) {
+    return -1;
+  }
+  /* platforms without boot IDs, e.g. macOS during development, record no boots */
+  agent_boot_read(&observation.boot);
+
+  agent_status_load(config, &status);
+  observation.previous_ms = status.last_compare * 1000;
+  observation.latest_reading_ms = status.last_sample * 1000;
+  observation.first_after_boot = observation.boot.id[0] != '\0' && strcmp(status.last_compare_boot, observation.boot.id) != 0;
+
+  result = agent_record(repository, &observation);
+  agent_inventory_free(&observation.inventory);
+  if (result == 0) {
+    status.last_compare = observation.now_ms / 1000;
+    snprintf(status.last_compare_boot, sizeof(status.last_compare_boot), "%s", observation.boot.id);
+    agent_status_save(config, &status);
+  }
+  return result;
+}
+
 static int agent_commit_locked(const agent_config *config) {
   tig_repository *repository;
   agent_device device;
@@ -39,7 +72,9 @@ static int agent_commit_locked(const agent_config *config) {
   if (agent_open(config, &device, &repository) != 0) {
     return -1;
   }
-  committed = tig_repository_commit(repository, "Record telemetry");
+  /* telemetry is still committed if events can't be recorded; the next commit tries again */
+  agent_observe(config, repository);
+  committed = tig_repository_commit(repository, 0);
   tig_repository_close(repository);
 
   if (committed != TIG_OK) {

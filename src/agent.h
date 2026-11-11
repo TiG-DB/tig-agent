@@ -25,6 +25,11 @@ typedef struct agent_config {
   int64_t push_interval_ms;
 } agent_config;
 
+/* the device's serial number, which only root can read from DMI, copied there by the package's install script */
+#define AGENT_PRODUCT_SERIAL "/etc/tig-agent/product_serial"
+
+#define AGENT_BOOT_ID_MAX 64
+
 /* all times are UNIX seconds, 0 if never */
 typedef struct agent_status {
   int64_t last_sample;
@@ -32,6 +37,8 @@ typedef struct agent_status {
   int64_t last_push_attempt;
   int64_t last_push;
   char last_push_result[16]; /* ok, failed, rejected or skipped */
+  int64_t last_compare;      /* when the device was last compared with its state */
+  char last_compare_boot[AGENT_BOOT_ID_MAX]; /* the boot that comparison was in */
 } agent_status;
 
 typedef enum agent_push_result {
@@ -79,6 +86,44 @@ void agent_unlock(int lock);
 /* telemetry.c: samples every stream this machine supports */
 int agent_sample(tig_repository *repository);
 
+/* inventory.c: the device as it is now, as tig-device/1 items (tig-docs/vocabularies/DEVICE.md) */
+typedef struct agent_inventory {
+  tig_node *entity; /* the entity's attributes */
+  tig_node *items;  /* item ID to attributes, without the entity */
+  tig_node *since;  /* item ID to when it is known to have been present from, for the items where that's known */
+} agent_inventory;
+
+typedef struct agent_boot {
+  char id[AGENT_BOOT_ID_MAX]; /* empty if unknown */
+  int64_t time_ms;            /* UNIX ms, 0 if unknown */
+} agent_boot;
+
+int  agent_inventory_read(agent_inventory *inventory);
+void agent_inventory_free(agent_inventory *inventory);
+int  agent_boot_read(agent_boot *boot);
+/* UNIX ms as RFC 3339 UTC, to the second */
+void agent_format_time(int64_t unix_ms, char *out, size_t out_size);
+
+/* sha256.c: "<kind>/" and the first 8 hex digits of the identity's SHA-256 */
+void agent_sha256(const void *data, size_t length, unsigned char digest[32]);
+void agent_hashed_id(const char *kind, const char *identity, char *out, size_t out_size);
+
+/* record.c */
+typedef struct agent_observation {
+  agent_inventory inventory;
+  agent_boot boot;
+  int64_t now_ms;
+  int64_t previous_ms;       /* the previous comparison, 0 if unknown */
+  int64_t latest_reading_ms; /* the latest telemetry reading, 0 if unknown */
+  int first_after_boot;      /* no comparison has been made in this boot */
+} agent_observation;
+
+/* writes the initial state and discovery for a new repository, a boot event for a boot that has none, and an
+   event for any difference between the device and its state */
+int       agent_record(tig_repository *repository, const agent_observation *observation);
+/* actions that turn state's items into the observed ones */
+tig_node *agent_diff(const tig_node *state_items, const tig_node *observed);
+
 /* sync.c */
 int               agent_configure_remote(const agent_config *config);
 agent_push_result agent_push(const agent_config *config);
@@ -88,7 +133,8 @@ int agent_status_load(const agent_config *config, agent_status *status);
 int agent_status_save(const agent_config *config, const agent_status *status);
 int agent_status_print(const agent_config *config);
 
-/* actions.c: each takes the agent lock and records its outcome in the status file */
+/* actions.c: each takes the agent lock and records its outcome in the status file. Committing first compares the
+   device with its state and records what changed. */
 int agent_collect(const agent_config *config);
 int agent_commit(const agent_config *config);
 int agent_sync(const agent_config *config, int retry_rejected);

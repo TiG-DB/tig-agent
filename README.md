@@ -12,9 +12,10 @@ using its own deploy key. Anything that accepts a fast-forward push works as a r
 ```
 tig-agentd (systemd service, user "tig")
 
-  every 60s   sample ──► tig_telemetry_append  ──► working tree of /var/lib/tig/repository
-  every 15m   commit ──► tig_repository_commit ──► local commits
-  every 1h    push   ──► git push origin HEAD:main, fast-forward only ──► any Git remote
+  every 60s   sample  ──► tig_telemetry_append  ──► working tree of /var/lib/tig/repository
+  every 15m   compare ──► tig_event_add         ──► working tree (only when something changed)
+              commit  ──► tig_repository_commit ──► local commits
+  every 1h    push    ──► git push origin HEAD:main, fast-forward only ──► any Git remote
 ```
 
 **One binary.** `tig-agent` is a C99 program that links `libtig` statically, with a pinned libgit2 built in, so the only
@@ -24,6 +25,11 @@ runtime library it needs is libc. `tig-agent daemon` is the service; the other c
 **Three cadences.** Following [`TELEMETRY.md`](https://github.com/jchown/tig-docs/blob/main/TELEMETRY.md), sampling,
 committing and pushing run at different rates. Readings are written to the working tree as soon as they are sampled, so a crash
 loses nothing; they are committed in batches; and commits are pushed less often still. All three intervals are configurable.
+
+**State is compared, not sampled.** At each commit, and so as soon as it starts, the agent reads the device's components
+and compares them with its state, replayed from `state/initial.yaml` and `/events`. Anything different becomes an event, so
+the repository says when a disk was replaced or the OS upgraded, not just what the machine looks like now. A boot is recorded
+once, the first time the agent runs in it.
 
 **Writing goes through libtig, pushing goes through git.** libtig owns the repository layout, file formats and the
 append-only rule. Pushing uses the `git` command rather than libgit2, so libgit2 needs no network or SSH support, and SSH
@@ -54,20 +60,55 @@ file doesn't list.
 **Serialised.** The daemon and manual commands take a lock (`/var/lib/tig/agent.lock`) around each step, so running
 `tig-agent collect` by hand while the service is running is safe.
 
-**Sandboxed.** The service runs as the unprivileged `tig` user with `ProtectSystem=strict`, `ProtectHome`, `NoNewPrivileges`
-and related settings. Everything it reads is world-readable, and it can only write to `/var/lib/tig`.
+**Sandboxed.** The service runs as the unprivileged `tig` user with `ProtectSystem=strict`, `ProtectHome=read-only`,
+`NoNewPrivileges` and related settings. Everything it reads is world-readable, except the device's serial number, which the
+package's install script copies from DMI to `/etc/tig-agent/product_serial` (readable by the `tig` group). It can only write
+to `/var/lib/tig`. `/home` is read-only rather than hidden so that a filesystem mounted there can be measured; the agent
+never reads files in it.
 
 ### What it records
+
+The repository uses the [`tig-device/1`](https://github.com/jchown/tig-docs/blob/main/vocabularies/DEVICE.md) vocabulary.
+It describes the device, not its owner: model and serial numbers and MAC addresses are recorded, but IP addresses,
+the hostname, network names, user accounts and files are not, since the repository may be shown to a future owner.
+
+**State.** `state/initial.yaml` holds only the entity: the device's vendor, model, serial number, architecture and, for
+a virtual machine, its hypervisor. Components are items, added by events:
+
+| Item | Attributes | Linux source |
+| --- | --- | --- |
+| `firmware` | `vendor`, `version`, `date` | `/sys/class/dmi/id/bios_*` |
+| `cpu/<socket>` | `model`, `cores`, `threads` | `/proc/cpuinfo` |
+| `memory` | `capacity` | `/sys/devices/system/memory`, else `MemTotal` rounded up to a GiB |
+| `disk/<hash>` | `model`, `serial`, `wwn`, `capacity`, `transport`, `rotational` | `/sys/block`, `/run/udev/data` |
+| `filesystem/<mount>` | `type`, `uuid`, `size`, `disks` | `/proc/self/mountinfo`, `statvfs()`, udev |
+| `network/<hash>` | `mac`, `medium`, `driver`, `hardware` | `/sys/class/net`, `ETHTOOL_GPERMADDR` |
+| `os` | `id`, `version`, `name`, `kernel` | `/etc/os-release`, `uname()` |
+| `battery/<hash>` | `manufacturer`, `model`, `serial`, `technology`, `design-energy` or `design-charge` | `/sys/class/power_supply` |
+
+Only internal disks are recorded, not removable or USB ones, and only filesystems of a persistent type on them. A disk with
+no model and serial, WWN or bus path to tell it apart (e.g. inside a container without udev) is left out, along with its
+filesystems.
+
+**Events.**
+
+| Event | When | Time |
+| --- | --- | --- |
+| `discovery` | When the repository is created: every component found, each with `since` (when a filesystem, or the OS on the root filesystem, was created; otherwise `unknown`) | Now |
+| `boot` | Once per boot, with the boot's ID, and the new kernel if it changed | The boot, from `btime` |
+| Changes | When the device no longer matches its state: `installed`, `removed`, `replaced`, `resized`, `upgraded` or `reconfigured` | The boot, if found at the first comparison after one; otherwise now. `not_before` is the previous comparison. |
+
+**Telemetry.**
 
 | Stream | Columns | Source |
 | --- | --- | --- |
 | `system.load` | `load1`, `load5`, `load15` | `getloadavg()` |
-| `system.uptime` | `value` (seconds) | `/proc/uptime` |
-| `memory` | `total`, `available` (bytes) | `/proc/meminfo` |
-| `disk.root` | `size`, `used`, `available` (bytes) | `statvfs("/")` |
+| `memory` | `available` (bytes) | `/proc/meminfo` |
+| `filesystem.root` | `used`, `available` (bytes) | `statvfs("/")` |
 
-All streams use daily chunks and a 5 minute `max_lag`. A stream is only defined once it has its first reading, so a platform
-that can't provide one (e.g. macOS during development) leaves nothing behind.
+Capacities and sizes are state, not telemetry, and the time since boot is given by boot events. All streams use daily
+chunks and a 5 minute `max_lag`. A stream is only defined once it has its first reading, so a platform that can't provide
+one (e.g. macOS during development) leaves nothing behind.
 
 ### On disk
 
@@ -76,7 +117,8 @@ that can't provide one (e.g. macOS during development) leaves nothing behind.
 /etc/tig-agent/update.env        GITHUB_TOKEN for the updater (you create this)
 /var/lib/tig/repository/         the TiG repository
 /var/lib/tig/keys/               device key, deploy key and pinned known_hosts
-/var/lib/tig/agent.status        last sample, commit and push, and the last push result
+/etc/tig-agent/product_serial    the device's serial number, copied from DMI by the install script
+/var/lib/tig/agent.status        last sample, comparison, commit and push, and the last push result
 /var/cache/tig-agent/            the installed .deb, kept for rollback
 /var/lib/tig-agent-update/       versions that failed their health check
 ```
@@ -102,7 +144,7 @@ server: tig-agent-update.timer (every 2 min) ◄── poll latest release ◄�
 
 **Build** (`.github/workflows/build.yml`). Runs in an `ubuntu:22.04` container on every push and pull request, so the package
 runs on Ubuntu 22.04+ and Debian 12+. The private `tig-lib` submodule is fetched with a read-only deploy key
-(`TIG_LIB_DEPLOY_KEY` secret). The package version is `0.1.0+<run number>.<commit>`, which `dpkg` orders correctly.
+(`TIG_LIB_DEPLOY_KEY` secret). The package version is `0.2.0+<run number>.<commit>`, which `dpkg` orders correctly.
 
 **Release.** On `main` only. `SHA256SUMS` is signed with `ssh-keygen -Y sign` using the release key (`RELEASE_SIGNING_KEY`
 secret). Its public half is [`packaging/release-signers`](packaging/release-signers) and is installed with the package, so each
@@ -189,12 +231,14 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-It builds and its tests pass on macOS too, though only `system.load` and `disk.root` are available there. To build the
+It builds and its tests pass on macOS too, though only `system.load` and `filesystem.root` are available there, and
+there are no boots or components to record. To build the
 package as CI does, run `cd build && cpack` on Linux.
 
-The tests are a unit test for configuration parsing and an end-to-end script that drives the real binary against a local bare
-repository: init, collect, push, a second fast-forward push, and a remote that has diverged, which must be refused and left
-untouched.
+The tests are unit tests for configuration parsing and for recording state and events (discovery, boots and each kind of
+change, from made-up inventories), and an end-to-end script that drives the real binary against a local bare repository:
+init with its initial state, discovery and boot events, collect, push, a second fast-forward push, and a remote that has
+diverged, which must be refused and left untouched.
 
 `tig-lib` is a submodule in `external/tig-lib`. To pick up library changes, commit them there, then update the submodule here
 in the same pull request as the agent changes that need them.
@@ -205,6 +249,9 @@ src/
   daemon.c       the service loop and its three cadences
   actions.c      collect, commit and sync, each under the agent lock and recorded in the status file
   telemetry.c    the streams and their samplers
+  inventory.c    the device's components, from the Linux sources in DEVICE.md
+  record.c       initial state, discovery, boot and change events
+  sha256.c       hashed item IDs
   sync.c         origin and `git push`
   repository.c   first-run setup, deploy key, lock
   device.c       device key and commit signing through ssh-keygen
@@ -213,15 +260,16 @@ src/
   process.c      running git and ssh-keygen with a timeout
   log.c          stderr logging with journald priorities
 packaging/       agent.conf, systemd units, maintainer scripts, updater and release key
-tests/           config_test.c and end_to_end.sh
+tests/           config_test.c, record_test.c and end_to_end.sh
 ```
 
 ## Not yet implemented
 
-These are needed before the agent follows the TiG spec in full. Most of the work is in `tig-lib`.
-
-- **State and events.** `tig_repository_commit` only stages `/telemetry`, so the agent can't yet record its initial state
-  snapshot (CPU, memory, disks, OS, packages) or events (package installed, OS upgraded, disk replaced).
+- **Later discoveries.** `DEVICE.md` has a new agent version record a discovery for a kind of item it starts recording.
+  This version records every kind from the start, so there is nothing to discover later yet.
+- **More components and packages.** Memory modules, graphics cards and installed packages are open questions in
+  `DEVICE.md`.
+- **Telemetry for other filesystems.** Only `filesystem.root` is sampled, though `DEVICE.md` names a stream for each.
 - **TiG Notary.** No signature tags yet, so the repository proves which device wrote it but not when.
   When it arrives, the push must include `refs/tags/tig/sig/*`.
-- **TiG clock.** Readings use the system clock, without the notary offset.
+- **TiG clock.** Readings and events use the system clock, without the notary offset.

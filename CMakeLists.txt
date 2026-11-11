@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(
   tig-agent
-  VERSION 0.1.0
+  VERSION 0.2.0
   DESCRIPTION "Records a machine's timeline into a TiG repository"
   LANGUAGES C
 )
@@ -55,13 +55,17 @@ add_library(
   src/telemetry.c
   src/daemon.c
   src/device.c
+  src/inventory.c
+  src/record.c
+  src/sha256.c
 )
 target_include_directories(tig-agent-core PUBLIC src)
 target_link_libraries(tig-agent-core PUBLIC tig::tig)
+# events name the agent and its version as their source
+target_compile_definitions(tig-agent-core PUBLIC TIG_AGENT_VERSION="${TIG_AGENT_VERSION}")
 
 add_executable(tig-agent src/main.c)
 target_link_libraries(tig-agent PRIVATE tig-agent-core)
-target_compile_definitions(tig-agent PRIVATE TIG_AGENT_VERSION="${TIG_AGENT_VERSION}")
 
 foreach(_target tig-agent-core tig-agent)
   target_compile_features(${_target} PRIVATE c_std_99)
@@ -78,6 +82,11 @@ if(TIG_AGENT_BUILD_TESTS)
   target_link_libraries(tig-agent-config-test PRIVATE tig-agent-core)
   target_compile_definitions(tig-agent-config-test PRIVATE _DEFAULT_SOURCE)
   add_test(NAME tig-agent-config-test COMMAND tig-agent-config-test)
+
+  add_executable(tig-agent-record-test tests/record_test.c)
+  target_link_libraries(tig-agent-record-test PRIVATE tig-agent-core)
+  target_compile_definitions(tig-agent-record-test PRIVATE _DEFAULT_SOURCE)
+  add_test(NAME tig-agent-record-test COMMAND tig-agent-record-test)
 
   add_test(
     NAME tig-agent-end-to-end
