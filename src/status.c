@@ -124,6 +124,14 @@ int agent_status_print(const agent_config *config) {
     }
   }
 
+  {
+    int major;
+    int minor;
+    int revision;
+
+    tig_git_engine_version(&major, &minor, &revision);
+    printf("%-14s%s (libtig %s, libgit2 %d.%d.%d)\n", "version", TIG_AGENT_VERSION, tig_version(), major, minor, revision);
+  }
   printf("%-14s%s\n", "repository", repository_path);
   printf("%-14s%s", "head", head);
   printf("%-14s%s\n", "remote", config->remote[0] != '\0' ? config->remote : "(none, kept local)");

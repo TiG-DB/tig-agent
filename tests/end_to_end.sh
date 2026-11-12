@@ -69,6 +69,7 @@ if [ -r /proc/meminfo ]; then
   grep -q 'name: total' "$repository/telemetry/memory/stream.yaml" && fail "memory stream still records the total"
 fi
 run status | grep -q '^push result *ok$' || fail "status does not show a successful push"
+run status | grep -qE "^version +[^ ]+ \(libtig [^ ]+, libgit2 [0-9.]+\)$" || fail "status does not show the versions"
 
 # the same boot and the same device: nothing more is recorded
 events_before=$(ls "$repository"/events/*/*.yaml | wc -l)
