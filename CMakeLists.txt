@@ -55,6 +55,7 @@ add_library(
   src/telemetry.c
   src/daemon.c
   src/device.c
+  src/docker.c
   src/inventory.c
   src/record.c
   src/sha256.c
@@ -87,6 +88,17 @@ if(TIG_AGENT_BUILD_TESTS)
   target_link_libraries(tig-agent-record-test PRIVATE tig-agent-core)
   target_compile_definitions(tig-agent-record-test PRIVATE _DEFAULT_SOURCE)
   add_test(NAME tig-agent-record-test COMMAND tig-agent-record-test)
+
+  add_executable(tig-agent-docker-test tests/docker_test.c)
+  target_link_libraries(tig-agent-docker-test PRIVATE tig-agent-core)
+  target_compile_definitions(tig-agent-docker-test PRIVATE _DEFAULT_SOURCE)
+  add_test(NAME tig-agent-docker-test COMMAND tig-agent-docker-test)
+
+  add_test(
+    NAME tig-agent-end-to-end-docker
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/end_to_end_docker.sh" "$<TARGET_FILE:tig-agent>"
+  )
+  set_tests_properties(tig-agent-end-to-end-docker PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
     NAME tig-agent-end-to-end

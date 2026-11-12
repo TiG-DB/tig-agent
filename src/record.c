@@ -14,7 +14,8 @@
 #define AGENT_SOURCE "tig-agent " TIG_AGENT_VERSION
 
 /* the kinds this agent records, in the order changes are listed */
-static const char *const agent_kinds[] = {"firmware", "cpu", "memory", "disk", "filesystem", "network", "os", "battery"};
+static const char *const agent_kinds[] = {"firmware", "cpu", "memory", "disk", "filesystem", "network", "os", "battery",
+                                          "stack", "container"};
 
 #define AGENT_KIND_COUNT (sizeof(agent_kinds) / sizeof(agent_kinds[0]))
 
@@ -33,6 +34,12 @@ static int agent_is_recorded(const char *id) {
     }
   }
   return 0;
+}
+
+/* Compose stacks and containers are compared only when Docker could be read, and a container is never "replaced" by a
+   different one: each is a service's replica, so one gone and another new are separate */
+static int agent_is_docker(const char *id) {
+  return agent_is_kind(id, "stack") || agent_is_kind(id, "container");
 }
 
 /* --- building events --- */
@@ -137,7 +144,7 @@ static tig_node *agent_add(agent_builder *builder, const char *id, const tig_nod
 /* --- comparing the device with its state --- */
 
 /* the action type for a change to one attribute, from the table in DEVICE.md */
-static const char *agent_update_type(const char *id, const char *attribute) {
+static const char *agent_update_type(const char *id, const char *attribute, const tig_node *before, const tig_node *now) {
   if (agent_is_kind(id, "firmware") ||
       (agent_is_kind(id, "os") && (strcmp(attribute, "id") == 0 || strcmp(attribute, "version") == 0 ||
                                    strcmp(attribute, "name") == 0))) {
@@ -148,6 +155,13 @@ static const char *agent_update_type(const char *id, const char *attribute) {
   }
   if (agent_is_kind(id, "filesystem") && strcmp(attribute, "size") == 0) {
     return "resized";
+  }
+  /* a container recreated from a new image is one upgrade, which sets its new `created` too, so state stays in step */
+  if (agent_is_kind(id, "container") &&
+      (strcmp(attribute, "image") == 0 || strcmp(attribute, "digest") == 0 ||
+       (strcmp(attribute, "created") == 0 && (!tig_node_equal(tig_node_get(before, "image"), tig_node_get(now, "image")) ||
+                                              !tig_node_equal(tig_node_get(before, "digest"), tig_node_get(now, "digest")))))) {
+    return "upgraded";
   }
   return "reconfigured";
 }
@@ -261,17 +275,20 @@ static void agent_diff_components(agent_builder *builder, tig_node *items, const
   for (i = 0; i < removed.count || i < added.count; ++i) {
     tig_node *action;
 
-    if (i < removed.count && i < added.count) {
+    if (!agent_is_docker(kind) && i < removed.count && i < added.count) {
       action = agent_action(builder, actions, "replaced");
       agent_record_change(builder, items, action, agent_change(builder, "remove", removed.items[i]));
       agent_record_change(builder, items, action, agent_add(builder, added.items[i], tig_node_get(observed, added.items[i]), 0));
       agent_update_references(builder, items, observed, action, removed.items[i], added.items[i]);
-    } else if (i < removed.count) {
-      action = agent_action(builder, actions, "removed");
-      agent_record_change(builder, items, action, agent_change(builder, "remove", removed.items[i]));
     } else {
-      action = agent_action(builder, actions, "installed");
-      agent_record_change(builder, items, action, agent_add(builder, added.items[i], tig_node_get(observed, added.items[i]), 0));
+      if (i < removed.count) {
+        action = agent_action(builder, actions, "removed");
+        agent_record_change(builder, items, action, agent_change(builder, "remove", removed.items[i]));
+      }
+      if (i < added.count) {
+        action = agent_action(builder, actions, "installed");
+        agent_record_change(builder, items, action, agent_add(builder, added.items[i], tig_node_get(observed, added.items[i]), 0));
+      }
     }
   }
 
@@ -292,7 +309,7 @@ static void agent_diff_attributes(agent_builder *builder, tig_node *items, const
   for (i = 0; i < tig_node_count(now) + tig_node_count(before); ++i) {
     int is_set = i < tig_node_count(now);
     const char *attribute = is_set ? tig_node_key_at(now, i) : tig_node_key_at(before, i - tig_node_count(now));
-    const char *type = agent_update_type(id, attribute);
+    const char *type = agent_update_type(id, attribute, before, now);
 
     if (!agent_is_compared(id, attribute) ||
         (is_set ? tig_node_equal(tig_node_get(before, attribute), tig_node_at(now, i)) : tig_node_get(now, attribute) != 0)) {
@@ -320,7 +337,7 @@ static void agent_diff_attributes(agent_builder *builder, tig_node *items, const
   }
 }
 
-tig_node *agent_diff(const tig_node *state_items, const tig_node *observed) {
+tig_node *agent_diff_with(const tig_node *state_items, const tig_node *observed, int include_docker) {
   agent_builder builder = {0};
   tig_node *items = tig_node_copy(state_items);
   tig_node *actions = tig_node_list();
@@ -332,11 +349,13 @@ tig_node *agent_diff(const tig_node *state_items, const tig_node *observed) {
     return 0;
   }
   for (i = 0; i < AGENT_KIND_COUNT; ++i) {
-    agent_diff_components(&builder, items, observed, actions, agent_kinds[i]);
+    if (include_docker || !agent_is_docker(agent_kinds[i])) {
+      agent_diff_components(&builder, items, observed, actions, agent_kinds[i]);
+    }
   }
   for (i = 0; i < tig_node_count(observed); ++i) {
     const char *id = tig_node_key_at(observed, i);
-    if (agent_is_recorded(id) && tig_node_get(items, id) != 0) {
+    if (agent_is_recorded(id) && tig_node_get(items, id) != 0 && (include_docker || !agent_is_docker(id))) {
       agent_diff_attributes(&builder, items, id, tig_node_at(observed, i), actions);
     }
   }
@@ -347,6 +366,10 @@ tig_node *agent_diff(const tig_node *state_items, const tig_node *observed) {
     return 0;
   }
   return actions;
+}
+
+tig_node *agent_diff(const tig_node *state_items, const tig_node *observed) {
+  return agent_diff_with(state_items, observed, 1);
 }
 
 /* --- what is already recorded --- */
@@ -373,6 +396,7 @@ static int64_t agent_parse_time(const char *text) {
 typedef struct agent_history {
   const char *boot_id;
   int has_discovery;
+  int docker_recorded; /* some event has already added, changed or removed a stack or container */
   int boot_recorded;
   int64_t latest_ms;
 } agent_history;
@@ -392,6 +416,23 @@ static tig_status agent_visit(void *context, const char *id, const tig_node *eve
     const tig_node *action = tig_node_at(actions, i);
     const char *action_type = tig_node_text(tig_node_get(action, "type"));
     const char *boot = tig_node_text(tig_node_get(action, "boot"));
+    const tig_node *changes = tig_node_get(action, "changes");
+    size_t c;
+
+    for (c = 0; c < tig_node_count(changes); ++c) {
+      const tig_node *change = tig_node_at(changes, c);
+      const char *item = tig_node_text(tig_node_get(change, "add"));
+
+      if (item == 0) {
+        item = tig_node_text(tig_node_get(change, "update"));
+      }
+      if (item == 0) {
+        item = tig_node_text(tig_node_get(change, "remove"));
+      }
+      if (item != 0 && agent_is_docker(item)) {
+        history->docker_recorded = 1;
+      }
+    }
 
     if (action_type != 0 && strcmp(action_type, "booted") == 0 && boot != 0 && history->boot_id != 0 &&
         strcmp(boot, history->boot_id) == 0) {
@@ -495,8 +536,45 @@ static int agent_record_boot(tig_repository *repository, const agent_boot *boot,
   return agent_add_event(repository, event, "boot");
 }
 
-static int agent_record_changes(tig_repository *repository, const agent_inventory *inventory, int64_t time_ms,
-                                int64_t not_before_ms) {
+/* Compose stacks, when the owner first turns them on: a discovery of just those kinds (DEVICE.md, "Discovery"), so they
+   are found as already present rather than installed */
+static int agent_record_docker_discovery(tig_repository *repository, const agent_inventory *inventory, int64_t now_ms) {
+  agent_builder builder = {0};
+  tig_node *event = agent_new_event(&builder, now_ms, 0, "discovery");
+  tig_node *actions = tig_node_list();
+  tig_node *action = agent_action(&builder, actions, "discovered");
+  size_t i;
+
+  for (i = 0; i < tig_node_count(inventory->items); ++i) {
+    const char *id = tig_node_key_at(inventory->items, i);
+    const char *since = tig_node_text(tig_node_get(inventory->since, id));
+
+    if (agent_is_docker(id)) {
+      agent_add_change(&builder, action, agent_add(&builder, id, tig_node_at(inventory->items, i), since != 0 ? since : "unknown"));
+    }
+  }
+  agent_check(&builder, tig_node_set(event, "actions", actions));
+  if (builder.failed) {
+    tig_node_free(event);
+    agent_log_error("cannot record the discovery of Compose stacks: out of memory");
+    return -1;
+  }
+  return agent_add_event(repository, event, "discovery of Compose stacks");
+}
+
+static int agent_has_docker_items(const agent_inventory *inventory) {
+  size_t i;
+
+  for (i = 0; i < tig_node_count(inventory->items); ++i) {
+    if (agent_is_docker(tig_node_key_at(inventory->items, i))) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static int agent_record_changes(tig_repository *repository, const agent_inventory *inventory, int include_docker,
+                                int64_t time_ms, int64_t not_before_ms) {
   agent_builder builder = {0};
   tig_node *state;
   tig_node *actions;
@@ -506,7 +584,7 @@ static int agent_record_changes(tig_repository *repository, const agent_inventor
     agent_log_error("cannot replay state: %s", tig_get_last_error());
     return -1;
   }
-  actions = agent_diff(tig_node_get(state, "items"), inventory->items);
+  actions = agent_diff_with(tig_node_get(state, "items"), inventory->items, include_docker);
   tig_node_free(state);
   if (actions == 0) {
     agent_log_error("cannot compare the device with its state: out of memory");
@@ -554,7 +632,13 @@ int agent_record(tig_repository *repository, const agent_observation *observatio
     if (time_ms < history.latest_ms) {
       time_ms = observation->now_ms;
     }
-    result = agent_record_changes(repository, &observation->inventory, time_ms, not_before_ms);
+    if (observation->docker_observed && !observation->docker_baseline && !history.docker_recorded &&
+        agent_has_docker_items(&observation->inventory)) {
+      result = agent_record_docker_discovery(repository, &observation->inventory, observation->now_ms);
+    }
+    if (result == 0) {
+      result = agent_record_changes(repository, &observation->inventory, observation->docker_observed, time_ms, not_before_ms);
+    }
   }
 
   if (result == 0 && history.boot_id != 0 && !history.boot_recorded && observation->boot.time_ms > 0) {

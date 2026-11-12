@@ -20,6 +20,7 @@ enum {
 typedef struct agent_config {
   char data_dir[AGENT_PATH_MAX];
   char remote[1024]; /* empty: never push */
+  char docker_host[256]; /* unix:///path or http://host:port of a Docker Engine API; empty: not recorded */
   int64_t sample_interval_ms;
   int64_t commit_interval_ms;
   int64_t push_interval_ms;
@@ -39,6 +40,7 @@ typedef struct agent_status {
   char last_push_result[16]; /* ok, failed, rejected or skipped */
   int64_t last_compare;      /* when the device was last compared with its state */
   char last_compare_boot[AGENT_BOOT_ID_MAX]; /* the boot that comparison was in */
+  int docker_baseline;       /* Docker was read at the last comparison, even if it had no stacks */
 } agent_status;
 
 typedef enum agent_push_result {
@@ -84,7 +86,7 @@ int  agent_lock(const agent_config *config);
 void agent_unlock(int lock);
 
 /* telemetry.c: samples every stream this machine supports */
-int agent_sample(tig_repository *repository);
+int agent_sample(const agent_config *config, tig_repository *repository);
 
 /* inventory.c: the device as it is now, as tig-device/1 items (tig-docs/vocabularies/DEVICE.md) */
 typedef struct agent_inventory {
@@ -108,9 +110,25 @@ void agent_format_time(int64_t unix_ms, char *out, size_t out_size);
 void agent_sha256(const void *data, size_t length, unsigned char digest[32]);
 void agent_hashed_id(const char *kind, const char *identity, char *out, size_t out_size);
 
+/* docker.c: Docker Compose stacks (DEVICE.md, "Compose stacks"), read through a read-only Docker Engine API */
+int agent_docker_enabled(const agent_config *config);
+/* adds stack/<project> and container/<project>/<service>/<n> items for the containers in a /containers/json
+   list, with when each was created in inventory->since; containers not made by Compose are left out */
+int agent_docker_items(const tig_node *containers, agent_inventory *inventory);
+/* reads the containers now and adds their items; -1 if Docker can't be reached, which leaves the inventory alone */
+int agent_docker_inventory(const agent_config *config, agent_inventory *inventory);
+/* appends a reading to each container's stream */
+int agent_docker_sample(const agent_config *config, tig_repository *repository, int64_t now_ms);
+/* a container's ID with "/" and any character a stream name doesn't allow replaced, e.g. container.shop.web.1 */
+void agent_docker_stream_name(const char *item_id, char *out, size_t out_size);
+/* bytes in use as `docker stats` shows them: usage without the page cache; -1 if stats has no memory figures */
+int64_t agent_docker_memory(const tig_node *stats);
+
 /* record.c */
 typedef struct agent_observation {
   agent_inventory inventory;
+  int docker_observed;       /* the inventory has the Compose stacks; without it they are left as recorded */
+  int docker_baseline;       /* Docker was read at an earlier comparison, so what is new now was installed since */
   agent_boot boot;
   int64_t now_ms;
   int64_t previous_ms;       /* the previous comparison, 0 if unknown */
@@ -123,6 +141,8 @@ typedef struct agent_observation {
 int       agent_record(tig_repository *repository, const agent_observation *observation);
 /* actions that turn state's items into the observed ones */
 tig_node *agent_diff(const tig_node *state_items, const tig_node *observed);
+/* as agent_diff; without include_docker, stacks and containers are not compared */
+tig_node *agent_diff_with(const tig_node *state_items, const tig_node *observed, int include_docker);
 
 /* sync.c */
 int               agent_configure_remote(const agent_config *config);
