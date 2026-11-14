@@ -85,6 +85,8 @@ run commit
 [ "$(ls "$repository"/events/*/*.yaml | wc -l)" -eq "$before" ] || fail "an unchanged stack recorded new events"
 
 # web is recreated from a new image and the database is removed
+# events in the same second are ordered by their random IDs, so one that depends on an earlier event waits a second
+sleep 1
 scenario_two
 run commit
 events | grep -qx '  - type: upgraded' || fail "no upgraded action"
