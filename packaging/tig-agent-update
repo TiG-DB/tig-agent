@@ -65,6 +65,11 @@ if [ -z "$sums" ]; then
 fi
 (cd "$work" && sha256sum --check --strict --quiet <<<"$sums")
 
+# there is nobody to answer dpkg's question when a conffile the owner edited has a new version, so keep the owner's
+dpkg_install() {
+  DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold -i "$1"
+}
+
 healthy() {
   sleep "$health_delay"
   systemctl is-active --quiet tig-agentd.service && runuser -u tig -- tig-agent status >/dev/null
@@ -73,7 +78,7 @@ healthy() {
 log "updating tig-agent $current -> $version"
 previous=$(ls "$cache"/tig-agent_*.deb 2>/dev/null | head -n 1 || true)
 
-if dpkg -i "$work/$deb" && healthy; then
+if dpkg_install "$work/$deb" && healthy; then
   rm -f "$cache"/tig-agent_*.deb
   cp "$work/$deb" "$cache/"
   log "tig-agent $version installed"
@@ -86,7 +91,7 @@ journalctl -u tig-agentd.service -n 20 --no-pager >&2 || true
 
 if [ -n "$previous" ]; then
   log "rolling back to $(basename "$previous")"
-  dpkg -i "$previous"
+  dpkg_install "$previous"
 else
   log "no earlier package is cached, so there is nothing to roll back to"
 fi
