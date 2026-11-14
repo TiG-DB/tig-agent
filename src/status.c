@@ -35,6 +35,8 @@ int agent_status_load(const agent_config *config, agent_status *status) {
       /* read */
     } else if (sscanf(line, "last_compare=%lld", &value) == 1) {
       status->last_compare = value;
+    } else if (sscanf(line, "docker_baseline=%lld", &value) == 1) {
+      status->docker_baseline = value != 0;
     } else if (sscanf(line, "last_compare_boot=%63s", status->last_compare_boot) == 1) {
       /* read */
     }
@@ -62,7 +64,8 @@ int agent_status_save(const agent_config *config, const agent_status *status) {
   fprintf(file, "last_sample=%lld\nlast_commit=%lld\nlast_push_attempt=%lld\nlast_push=%lld\nlast_push_result=%s\n",
           (long long)status->last_sample, (long long)status->last_commit, (long long)status->last_push_attempt,
           (long long)status->last_push, status->last_push_result);
-  fprintf(file, "last_compare=%lld\nlast_compare_boot=%s\n", (long long)status->last_compare, status->last_compare_boot);
+  fprintf(file, "last_compare=%lld\nlast_compare_boot=%s\ndocker_baseline=%d\n", (long long)status->last_compare,
+          status->last_compare_boot, status->docker_baseline);
   if (fclose(file) != 0 || rename(temporary, path) != 0) {
     agent_log_error("%s: %s", path, strerror(errno));
     return -1;

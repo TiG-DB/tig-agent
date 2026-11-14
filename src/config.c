@@ -86,6 +86,20 @@ static int agent_config_set(agent_config *config, const char *key, const char *v
   if (strcmp(key, "remote") == 0) {
     return agent_copy_value(config->remote, sizeof(config->remote), value);
   }
+  if (strcmp(key, "docker_host") == 0) {
+    size_t i;
+
+    /* passed to curl as an argument, never through a shell; only plain text and no credentials */
+    if (value[0] != '\0' && strncmp(value, "unix:///", 8) != 0 && strncmp(value, "http://", 7) != 0) {
+      return -1;
+    }
+    for (i = 0; value[i] != '\0'; ++i) {
+      if (!isgraph((unsigned char)value[i]) || value[i] == '@' || value[i] == '\'' || value[i] == '"') {
+        return -1;
+      }
+    }
+    return agent_copy_value(config->docker_host, sizeof(config->docker_host), value);
+  }
   if (strcmp(key, "sample_interval") == 0) {
     return agent_parse_duration(value, &config->sample_interval_ms);
   }

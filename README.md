@@ -110,6 +110,49 @@ Capacities and sizes are state, not telemetry, and the time since boot is given 
 chunks and a 5 minute `max_lag`. A stream is only defined once it has its first reading, so a platform that can't provide
 one (e.g. macOS during development) leaves nothing behind.
 
+### Docker Compose stacks
+
+Optional, and off until `docker_host` is set. The agent reads containers that Docker Compose made from the Docker Engine API and
+records them following the "Compose stacks" section of
+[`DEVICE.md`](https://github.com/jchown/tig-docs/blob/main/vocabularies/DEVICE.md):
+
+- **State and events.** Each Compose project is an item `stack/<project>` and each replica of a service is `container/<project>/<service>/<n>`,
+  with its `image`, image `digest` and `created` time. When the setting is first turned on, what is already running is
+  found in one `discovery` event. After that, a container appearing is `installed`, one going is `removed`, one recreated from a
+  new image or digest is `upgraded`, and one recreated from the same image is `reconfigured`. These are found when the agent
+  compares the device with its state at each commit.
+- **Telemetry.** A stream `container.<project>.<service>.<n>` per container, sampled with the rest, with `state`, `health`,
+  `restarts`, `cpu` (cores in use since the previous reading) and `memory` (bytes, without the page cache). `cpu` is empty on a
+  first reading, such as one made by `tig-agent collect` by hand.
+- **Not recorded.** Environment variables, commands, ports, volumes, networks, other labels and the Compose file, and containers
+  that Compose didn't make or that `docker compose run` started for a one-off task.
+- **If Docker can't be reached,** the agent logs it once and records nothing about Docker until it can. Stacks already recorded
+  are left alone, not taken as removed.
+
+**Access.** The agent only ever sends `GET` requests, through `curl`, to `/containers/json`, `/containers/<id>/json` and
+`/containers/<id>/stats`. The Docker socket itself is root-equivalent, so rather than giving the `tig` user access to it, run a
+read-only proxy that allows only those requests and point `docker_host` at that. For example, with
+[`tecnativa/docker-socket-proxy`](https://github.com/Tecnativa/docker-socket-proxy), which refuses everything but `GET` by default:
+
+```yaml
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    environment:
+      CONTAINERS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - 127.0.0.1:2375:2375
+```
+
+```
+docker_host = http://127.0.0.1:2375
+```
+
+`docker_host` accepts only `unix:///path` and plain `http://host:port`, with no credentials in it. The proxy publishes only on the
+loopback interface, so nothing else on the network can reach it.
+
 ### On disk
 
 ```
@@ -213,6 +256,7 @@ update keeps the previous package.
 | --- | --- | --- |
 | `data_dir` | `/var/lib/tig` | Where the repository, keys and status are kept. Must be absolute. |
 | `remote` | *(empty)* | Git remote to push to. Empty keeps the repository local. |
+| `docker_host` | *(empty)* | Docker Engine API to record Compose stacks from: `unix:///path` or `http://host:port`. Empty records nothing about Docker. |
 | `sample_interval` | `60s` | How often telemetry is sampled. |
 | `commit_interval` | `15m` | How often readings are committed. |
 | `push_interval` | `1h` | How often commits are pushed (each push commits first). |
@@ -238,7 +282,9 @@ package as CI does, run `cd build && cpack` on Linux.
 The tests are unit tests for configuration parsing and for recording state and events (discovery, boots and each kind of
 change, from made-up inventories), and an end-to-end script that drives the real binary against a local bare repository:
 init with its initial state, discovery and boot events, collect, push, a second fast-forward push, and a remote that has
-diverged, which must be refused and left untouched.
+diverged, which must be refused and left untouched. A second script runs it against a fake Docker Engine API (it needs
+`python3`, and is skipped without it): stacks found at install, a container upgraded and another removed, Docker going away,
+and stacks turned on in a repository that already has its discovery. It also checks that no configuration reaches the events.
 
 `tig-lib` is a submodule in `external/tig-lib`. To pick up library changes, commit them there, then update the submodule here
 in the same pull request as the agent changes that need them.
@@ -249,6 +295,7 @@ src/
   daemon.c       the service loop and its three cadences
   actions.c      collect, commit and sync, each under the agent lock and recorded in the status file
   telemetry.c    the streams and their samplers
+  docker.c       Docker Compose stacks: items and telemetry, read from the Engine API
   inventory.c    the device's components, from the Linux sources in DEVICE.md
   record.c       initial state, discovery, boot and change events
   sha256.c       hashed item IDs
@@ -260,7 +307,7 @@ src/
   process.c      running git and ssh-keygen with a timeout
   log.c          stderr logging with journald priorities
 packaging/       agent.conf, systemd units, maintainer scripts, updater and release key
-tests/           config_test.c, record_test.c and end_to_end.sh
+tests/           unit tests, end_to_end.sh, and end_to_end_docker.sh with its fake Docker API (fake_docker.py)
 ```
 
 ## Not yet implemented

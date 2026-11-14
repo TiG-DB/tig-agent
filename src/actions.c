@@ -20,7 +20,7 @@ int agent_collect(const agent_config *config) {
     return -1;
   }
 
-  result = agent_sample(repository);
+  result = agent_sample(config, repository);
   tig_repository_close(repository);
 
   agent_status_load(config, &status);
@@ -45,10 +45,13 @@ static int agent_observe(const agent_config *config, tig_repository *repository)
   if (agent_inventory_read(&observation.inventory) != 0) {
     return -1;
   }
+  /* when Docker can't be reached its stacks are left as they were recorded, not taken as removed */
+  observation.docker_observed = agent_docker_enabled(config) && agent_docker_inventory(config, &observation.inventory) == 0;
   /* platforms without boot IDs, e.g. macOS during development, record no boots */
   agent_boot_read(&observation.boot);
 
   agent_status_load(config, &status);
+  observation.docker_baseline = status.docker_baseline;
   observation.previous_ms = status.last_compare * 1000;
   observation.latest_reading_ms = status.last_sample * 1000;
   observation.first_after_boot = observation.boot.id[0] != '\0' && strcmp(status.last_compare_boot, observation.boot.id) != 0;
@@ -57,6 +60,12 @@ static int agent_observe(const agent_config *config, tig_repository *repository)
   agent_inventory_free(&observation.inventory);
   if (result == 0) {
     status.last_compare = observation.now_ms / 1000;
+    /* an empty first reading still counts, so what appears later is installed; turning Docker off forgets it */
+    if (observation.docker_observed) {
+      status.docker_baseline = 1;
+    } else if (!agent_docker_enabled(config)) {
+      status.docker_baseline = 0;
+    }
     snprintf(status.last_compare_boot, sizeof(status.last_compare_boot), "%s", observation.boot.id);
     agent_status_save(config, &status);
   }

@@ -23,7 +23,7 @@ jobs:
         run: |
           apt-get update -qq
           DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-            build-essential cmake git openssh-client ca-certificates dpkg-dev file
+            build-essential cmake git openssh-client ca-certificates dpkg-dev file curl python3
 
       - uses: actions/checkout@v7
 

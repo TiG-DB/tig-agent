@@ -87,7 +87,7 @@ static const agent_stream agent_streams[] = {
 
 #define AGENT_STREAM_COUNT (sizeof(agent_streams) / sizeof(agent_streams[0]))
 
-int agent_sample(tig_repository *repository) {
+int agent_sample(const agent_config *config, tig_repository *repository) {
   int64_t now;
   size_t i;
   int failures = 0;
@@ -121,6 +121,10 @@ int agent_sample(tig_repository *repository) {
       agent_log_error("cannot record %s: %s", stream->name, tig_get_last_error());
       ++failures;
     }
+  }
+
+  if (agent_docker_enabled(config) && agent_docker_sample(config, repository, now) != 0) {
+    ++failures;
   }
 
   return failures == 0 ? 0 : -1;
