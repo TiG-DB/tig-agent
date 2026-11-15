@@ -56,6 +56,7 @@ add_library(
   src/daemon.c
   src/device.c
   src/docker.c
+  src/docker_versions.c
   src/inventory.c
   src/record.c
   src/sha256.c
