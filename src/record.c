@@ -159,6 +159,8 @@ static const char *agent_update_type(const char *id, const char *attribute, cons
   /* a container recreated from a new image is one upgrade, which sets its new `created` too, so state stays in step */
   if (agent_is_kind(id, "container") &&
       (strcmp(attribute, "image") == 0 || strcmp(attribute, "digest") == 0 ||
+       (strcmp(attribute, "version") == 0 && (!tig_node_equal(tig_node_get(before, "image"), tig_node_get(now, "image")) ||
+                                              !tig_node_equal(tig_node_get(before, "digest"), tig_node_get(now, "digest")))) ||
        (strcmp(attribute, "created") == 0 && (!tig_node_equal(tig_node_get(before, "image"), tig_node_get(now, "image")) ||
                                               !tig_node_equal(tig_node_get(before, "digest"), tig_node_get(now, "digest")))))) {
     return "upgraded";
@@ -311,6 +313,13 @@ static void agent_diff_attributes(agent_builder *builder, tig_node *items, const
     const char *attribute = is_set ? tig_node_key_at(now, i) : tig_node_key_at(before, i - tig_node_count(now));
     const char *type = agent_update_type(id, attribute, before, now);
 
+    /* a version is only looked up now and then, so one that isn't there now, for an image that hasn't changed, is not
+       one that has gone */
+    if (!is_set && agent_is_kind(id, "container") && strcmp(attribute, "version") == 0 &&
+        tig_node_equal(tig_node_get(before, "image"), tig_node_get(now, "image")) &&
+        tig_node_equal(tig_node_get(before, "digest"), tig_node_get(now, "digest"))) {
+      continue;
+    }
     if (!agent_is_compared(id, attribute) ||
         (is_set ? tig_node_equal(tig_node_get(before, attribute), tig_node_at(now, i)) : tig_node_get(now, attribute) != 0)) {
       continue;

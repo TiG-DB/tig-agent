@@ -292,6 +292,19 @@ static tig_node *agent_docker_json(const char *text) {
   return node;
 }
 
+tig_node *agent_docker_get(const agent_config *config, const char *path) {
+  const char *paths[1] = {path};
+  agent_responses responses;
+  tig_node *node;
+
+  if (agent_docker_fetch(config, paths, 1, &responses) != 0) {
+    return 0;
+  }
+  node = agent_docker_json(responses.bodies[0]);
+  agent_docker_release(&responses);
+  return node;
+}
+
 /* reported once per outage, not every minute */
 static int agent_docker_unreachable;
 
@@ -333,6 +346,9 @@ int agent_docker_inventory(const agent_config *config, agent_inventory *inventor
   }
   result = agent_docker_items(containers, inventory);
   tig_node_free(containers);
+  if (result == 0) {
+    agent_docker_versions(config, inventory);
+  }
   return result;
 }
 

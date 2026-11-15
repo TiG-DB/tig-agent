@@ -21,6 +21,7 @@ typedef struct agent_config {
   char data_dir[AGENT_PATH_MAX];
   char remote[1024]; /* empty: never push */
   char docker_host[256]; /* unix:///path or http://host:port of a Docker Engine API; empty: not recorded */
+  int docker_versions;   /* look container images' versions up on Docker Hub (docker_versions = hub) */
   int64_t sample_interval_ms;
   int64_t commit_interval_ms;
   int64_t push_interval_ms;
@@ -123,6 +124,27 @@ int agent_docker_sample(const agent_config *config, tig_repository *repository, 
 void agent_docker_stream_name(const char *item_id, char *out, size_t out_size);
 /* bytes in use as `docker stats` shows them: usage without the page cache; -1 if stats has no memory figures */
 int64_t agent_docker_memory(const tig_node *stats);
+
+/* GETs one Engine API path and parses the JSON reply; NULL if it can't be read or the request failed */
+tig_node *agent_docker_get(const agent_config *config, const char *path);
+
+/* docker_versions.c: names the release a mutable tag such as `latest` is, from Docker Hub. It finds the tags there
+   that have the same digest as the image the container runs, and takes the most specific version among them. */
+/* the Docker Hub repository ("library/mongo") and tag of an image reference; -1 if the image isn't from Docker Hub */
+int agent_hub_reference(const char *image, char *repo, size_t repo_size, char *tag, size_t tag_size);
+/* 0 if the tag doesn't look like a release ("latest", "rc", "8"), else higher for a more specific one ("8.2.12") */
+int agent_hub_version_score(const char *tag);
+typedef struct agent_hub_match {
+  char version[64]; /* the best version-like tag so far, empty if none */
+  int score;
+  int matched;      /* some tag has one of the digests, so the tags that share it have been reached */
+} agent_hub_match;
+/* adds the tags in one page of Hub's /tags reply that share one of the digests, other than the image's own tag */
+void agent_hub_scan(const tig_node *reply, const char *const *digests, size_t digest_count, const char *own_tag,
+                    agent_hub_match *match);
+/* adds a `version` to the container items whose release can be found; items it can't are left as they are, and it
+   never fails the inventory */
+void agent_docker_versions(const agent_config *config, agent_inventory *inventory);
 
 /* record.c */
 typedef struct agent_observation {

@@ -100,6 +100,17 @@ static int agent_config_set(agent_config *config, const char *key, const char *v
     }
     return agent_copy_value(config->docker_host, sizeof(config->docker_host), value);
   }
+  if (strcmp(key, "docker_versions") == 0) {
+    if (strcmp(value, "hub") == 0) {
+      config->docker_versions = 1;
+      return 0;
+    }
+    if (value[0] == '\0' || strcmp(value, "off") == 0) {
+      config->docker_versions = 0;
+      return 0;
+    }
+    return -1;
+  }
   if (strcmp(key, "sample_interval") == 0) {
     return agent_parse_duration(value, &config->sample_interval_ms);
   }

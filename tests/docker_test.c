@@ -185,6 +185,136 @@ static void test_too_many(void) {
   free(json);
 }
 
+static void test_hub_reference(void) {
+  char repo[200];
+  char tag[128];
+
+  CHECK(agent_hub_reference("mongo:8.2", repo, sizeof(repo), tag, sizeof(tag)) == 0);
+  CHECK(strcmp(repo, "library/mongo") == 0 && strcmp(tag, "8.2") == 0);
+  CHECK(agent_hub_reference("gitlab/gitlab-ce:latest", repo, sizeof(repo), tag, sizeof(tag)) == 0);
+  CHECK(strcmp(repo, "gitlab/gitlab-ce") == 0 && strcmp(tag, "latest") == 0);
+  CHECK(agent_hub_reference("tecnativa/docker-socket-proxy", repo, sizeof(repo), tag, sizeof(tag)) == 0);
+  CHECK(strcmp(repo, "tecnativa/docker-socket-proxy") == 0 && strcmp(tag, "latest") == 0);
+  CHECK(agent_hub_reference("docker.io/library/redis:7", repo, sizeof(repo), tag, sizeof(tag)) == 0);
+  CHECK(strcmp(repo, "library/redis") == 0 && strcmp(tag, "7") == 0);
+  CHECK(agent_hub_reference("docker.io/louislam/uptime-kuma:2", repo, sizeof(repo), tag, sizeof(tag)) == 0);
+  CHECK(strcmp(repo, "louislam/uptime-kuma") == 0);
+
+  /* other registries, digests, bare IDs and local builds that aren't on Hub are not looked up by name */
+  CHECK(agent_hub_reference("ghcr.io/owner/app:1", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+  CHECK(agent_hub_reference("registry.example.com:5000/app:1", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+  CHECK(agent_hub_reference("localhost/app:1", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+  CHECK(agent_hub_reference("nginx@sha256:aa11", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+  CHECK(agent_hub_reference("sha256:aa11", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+  CHECK(agent_hub_reference("a/b/c:1", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+  CHECK(agent_hub_reference("Bad Name:1", repo, sizeof(repo), tag, sizeof(tag)) != 0);
+}
+
+static void test_hub_versions(void) {
+  const char *digests[2] = {"sha256:aaaa", "sha256:bbbb"};
+  agent_hub_match match;
+  tig_node *reply;
+
+  CHECK(agent_hub_version_score("8") == 0);
+  CHECK(agent_hub_version_score("latest") == 0);
+  CHECK(agent_hub_version_score("rc") == 0);
+  CHECK(agent_hub_version_score("sha-756135f") == 0);
+  CHECK(agent_hub_version_score("1.2.3-rc1") == 0);
+  CHECK(agent_hub_version_score("2.0.0-beta.2") == 0);
+  CHECK(agent_hub_version_score("8.2") > 0);
+  CHECK(agent_hub_version_score("8.2.12") > agent_hub_version_score("8.2"));
+  CHECK(agent_hub_version_score("8.2.12") > agent_hub_version_score("8.2.12-noble"));
+  CHECK(agent_hub_version_score("v0.5.0") > 0);
+  CHECK(agent_hub_version_score("19.5.5-ce.0") > agent_hub_version_score("19.5"));
+
+  /* tags that share the digest: the most specific release, not the image's own tag, a candidate or a platform's tag */
+  reply = parse("{\"count\":6,\"results\":["
+                "{\"name\":\"latest\",\"digest\":\"sha256:aaaa\",\"images\":[]},"
+                "{\"name\":\"8.2\",\"digest\":\"sha256:aaaa\",\"images\":[]},"
+                "{\"name\":\"8.2.12\",\"digest\":\"sha256:aaaa\"},"
+                "{\"name\":\"8.2.12-noble\",\"digest\":\"sha256:aaaa\",\"images\":[]},"
+                "{\"name\":\"rc\",\"digest\":\"sha256:aaaa\",\"images\":[]},"
+                "{\"name\":\"9.0.1\",\"digest\":\"sha256:cccc\",\"images\":[]}]}");
+  memset(&match, 0, sizeof(match));
+  agent_hub_scan(reply, digests, 1, "latest", &match);
+  CHECK(match.matched && strcmp(match.version, "8.2.12") == 0);
+  tig_node_free(reply);
+
+  /* the registry digest the image was pulled by, as it is on a platform's image in the list */
+  reply = parse("{\"results\":[{\"name\":\"3.4.5\",\"digest\":\"sha256:cccc\",\"images\":["
+                "{\"architecture\":\"amd64\",\"digest\":\"sha256:bbbb\"}]}]}");
+  memset(&match, 0, sizeof(match));
+  agent_hub_scan(reply, digests, 2, "latest", &match);
+  CHECK(match.matched && strcmp(match.version, "3.4.5") == 0);
+  tig_node_free(reply);
+
+  /* nothing shares it, or only the image's own tag does */
+  reply = parse("{\"results\":[{\"name\":\"1.0.0\",\"digest\":\"sha256:dddd\"},{\"name\":\"2.0.0\"}]}");
+  memset(&match, 0, sizeof(match));
+  agent_hub_scan(reply, digests, 2, "latest", &match);
+  CHECK(!match.matched && match.version[0] == '\0');
+  tig_node_free(reply);
+  reply = parse("{\"results\":[{\"name\":\"2.5.1\",\"digest\":\"sha256:aaaa\"}]}");
+  memset(&match, 0, sizeof(match));
+  agent_hub_scan(reply, digests, 1, "2.5.1", &match);
+  CHECK(match.matched && match.version[0] == '\0');
+  tig_node_free(reply);
+}
+
+/* a version follows the image: it is an upgrade with a new digest, and not changed by Hub being out of reach */
+static void test_version_diff(void) {
+  tig_node *before = parse("container/gitlab/gitlab/1: { image: \"gitlab/gitlab-ce:latest\", digest: sha256:aa11, version: 19.5.4-ce.0, "
+                           "created: \"2026-11-10T04:00:00Z\" }\n");
+  tig_node *after;
+  tig_node *actions;
+
+  after = parse("container/gitlab/gitlab/1: { image: \"gitlab/gitlab-ce:latest\", digest: sha256:bb22, version: 19.5.5-ce.0, "
+                "created: \"2026-11-15T04:00:16Z\" }\n");
+  actions = agent_diff(before, after);
+  CHECK(renders_as(actions,
+                   "- type: upgraded\n"
+                   "  changes:\n"
+                   "    - update: container/gitlab/gitlab/1\n"
+                   "      set: { digest: \"sha256:bb22\", version: 19.5.5-ce.0, created: \"2026-11-15T04:00:16Z\" }\n"));
+  tig_node_free(actions);
+  tig_node_free(after);
+
+  /* no version this time, for the image that is still there: Hub could not be asked, so nothing has changed */
+  after = parse("container/gitlab/gitlab/1: { image: \"gitlab/gitlab-ce:latest\", digest: sha256:aa11, "
+                "created: \"2026-11-10T04:00:00Z\" }\n");
+  actions = agent_diff(before, after);
+  CHECK(actions != 0 && tig_node_count(actions) == 0);
+  tig_node_free(actions);
+  tig_node_free(after);
+
+  /* but a new digest with no version known does lose the old one, which no longer describes it */
+  after = parse("container/gitlab/gitlab/1: { image: \"gitlab/gitlab-ce:latest\", digest: sha256:bb22, "
+                "created: \"2026-11-15T04:00:16Z\" }\n");
+  actions = agent_diff(before, after);
+  CHECK(renders_as(actions,
+                   "- type: upgraded\n"
+                   "  changes:\n"
+                   "    - update: container/gitlab/gitlab/1\n"
+                   "      set: { digest: \"sha256:bb22\", created: \"2026-11-15T04:00:16Z\" }\n"
+                   "      unset: [version]\n"));
+  tig_node_free(actions);
+  tig_node_free(after);
+
+  /* a version found for an image already recorded without one is reconfiguration of the record, not an upgrade */
+  tig_node_free(before);
+  before = parse("container/shop/db/1: { image: \"postgres:16\", digest: sha256:bb22, created: \"2026-11-10T08:40:00Z\" }\n");
+  after = parse("container/shop/db/1: { image: \"postgres:16\", digest: sha256:bb22, version: \"16.4\", created: \"2026-11-10T08:40:00Z\" }\n");
+  actions = agent_diff(before, after);
+  CHECK(renders_as(actions,
+                   "- type: reconfigured\n"
+                   "  changes:\n"
+                   "    - update: container/shop/db/1\n"
+                   "      set: { version: \"16.4\" }\n"));
+  tig_node_free(actions);
+  tig_node_free(after);
+  tig_node_free(before);
+}
+
 static void test_config(void) {
   agent_config config;
 
@@ -203,6 +333,17 @@ static void test_config(void) {
   CHECK(agent_config_parse(&config, "docker_host = http://user:pass@host:2375\n", "test") != 0);
   CHECK(agent_config_parse(&config, "docker_host = unix:///a b\n", "test") != 0);
   CHECK(agent_config_parse(&config, "docker_host = unix:///a'b\n", "test") != 0);
+
+  /* version lookups are off unless asked for */
+  agent_config_defaults(&config);
+  CHECK(config.docker_versions == 0);
+  CHECK(agent_config_parse(&config, "docker_versions = hub\n", "test") == 0);
+  CHECK(config.docker_versions == 1);
+  CHECK(agent_config_parse(&config, "docker_versions = off\n", "test") == 0);
+  CHECK(config.docker_versions == 0);
+  CHECK(agent_config_parse(&config, "docker_versions = hub\ndocker_versions =\n", "test") == 0);
+  CHECK(config.docker_versions == 0);
+  CHECK(agent_config_parse(&config, "docker_versions = ghcr\n", "test") != 0);
 }
 
 int main(void) {
@@ -210,6 +351,9 @@ int main(void) {
   test_names_and_memory();
   test_diff();
   test_too_many();
+  test_hub_reference();
+  test_hub_versions();
+  test_version_diff();
   test_config();
   return failures == 0 ? 0 : 1;
 }

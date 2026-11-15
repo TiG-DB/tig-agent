@@ -124,6 +124,17 @@ records them following the "Compose stacks" section of
 - **Telemetry.** A stream `container.<project>.<service>.<n>` per container, sampled with the rest, with `state`, `health`,
   `restarts`, `cpu` (cores in use since the previous reading) and `memory` (bytes, without the page cache). `cpu` is empty on a
   first reading, such as one made by `tig-agent collect` by hand.
+- **Versions (optional).** `docker_versions = hub` names the release behind a tag such as `latest`. For each image the
+  agent asks Docker Hub for the tags that share the digest of the image the container runs, and records the most specific
+  release among them (e.g. `19.5.5-ce.0` for `gitlab/gitlab-ce:latest`) as `version` beside `image` and `digest`, so an
+  `upgraded` event shows `19.5.4-ce.0` becoming `19.5.5-ce.0`. Labels in the image are not used, because they are
+  inherited from its base image (GitLab's say Ubuntu's 24.04). It is off by default: it is the only thing the agent
+  requests from the Internet, and it tells Docker Hub which public images the machine runs. Only Docker Hub images are
+  looked up, by name; ones from other registries or built locally get no `version`, and neither does an image whose
+  tags Hub lists beyond the 500 most recent. Answers are kept while the agent runs, an image with none is asked about
+  again after an hour, and a version that can't be found now never removes one already recorded for the same image. On
+  a Docker that reports an image's ID as its configuration digest, the registry digest is read from
+  `/images/<id>/json`, which needs `IMAGES=1` on the socket proxy.
 - **Not recorded.** Environment variables, commands, ports, volumes, networks, other labels and the Compose file, and containers
   that Compose didn't make or that `docker compose run` started for a one-off task.
 - **If Docker can't be reached,** the agent logs it once and records nothing about Docker until it can. Stacks already recorded
@@ -257,6 +268,7 @@ update keeps the previous package.
 | `data_dir` | `/var/lib/tig` | Where the repository, keys and status are kept. Must be absolute. |
 | `remote` | *(empty)* | Git remote to push to. Empty keeps the repository local. |
 | `docker_host` | *(empty)* | Docker Engine API to record Compose stacks from: `unix:///path` or `http://host:port`. Empty records nothing about Docker. |
+| `docker_versions` | *(empty)* | `hub` to name the release behind image tags such as `latest` from Docker Hub. Empty or `off` asks nothing. |
 | `sample_interval` | `60s` | How often telemetry is sampled. |
 | `commit_interval` | `15m` | How often readings are committed. |
 | `push_interval` | `1h` | How often commits are pushed (each push commits first). |
