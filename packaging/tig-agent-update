@@ -3,7 +3,7 @@
 # Run by tig-agent-update.timer; GITHUB_TOKEN comes from /etc/tig-agent/update.env.
 set -euo pipefail
 
-repo=${TIG_AGENT_RELEASE_REPO:-jchown/tig-agent}
+repo=${TIG_AGENT_RELEASE_REPO:-TiG-DB/tig-agent}
 signers=/usr/share/tig-agent/release-signers
 cache=/var/cache/tig-agent
 state=/var/lib/tig-agent-update
