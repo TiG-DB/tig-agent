@@ -1,6 +1,6 @@
 [Unit]
 Description=Install the latest tig-agent release
-Documentation=https://github.com/jchown/tig-agent
+Documentation=https://github.com/TiG-DB/tig-agent
 After=network-online.target
 Wants=network-online.target
 

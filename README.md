@@ -1,8 +1,8 @@
 # tig-agent
 
-`tig-agent` records a Linux machine's timeline into a [TiG](https://github.com/jchown/tig-docs) repository and pushes it to an
+`tig-agent` records a Linux machine's timeline into a [TiG](https://github.com/TiG-DB/tig-docs) repository and pushes it to an
 ordinary Git remote. It is the collector described in the TiG roadmap (Phase 1, desktop and server prototype), built on
-[`tig-lib`](https://github.com/jchown/tig-lib).
+[`tig-lib`](https://github.com/TiG-DB/tig-lib).
 
 This is an MVP. It deliberately knows nothing about hosting: it keeps a local repository, and pushes it with the system's `git`
 using its own deploy key. Anything that accepts a fast-forward push works as a remote.
@@ -22,7 +22,7 @@ tig-agentd (systemd service, user "tig")
 runtime library it needs is libc. `tig-agent daemon` is the service; the other commands (`init`, `collect`, `commit`, `push`,
 `status`) do one step by hand and are what the daemon calls internally.
 
-**Three cadences.** Following [`TELEMETRY.md`](https://github.com/jchown/tig-docs/blob/main/TELEMETRY.md), sampling,
+**Three cadences.** Following [`TELEMETRY.md`](https://github.com/TiG-DB/tig-docs/blob/main/TELEMETRY.md), sampling,
 committing and pushing run at different rates. Readings are written to the working tree as soon as they are sampled, so a crash
 loses nothing; they are committed in batches; and commits are pushed less often still. All three intervals are configurable.
 
@@ -47,7 +47,7 @@ host key on first use. The key is scoped to one remote, e.g. as a GitHub deploy 
 separate from the device key, so the device's identity doesn't depend on access to any particular host.
 
 **Every commit is signed by the device key.** The agent also creates `keys/device_ed25519`, the device's permanent,
-pseudonymous identity (see [`COMMITS.md`](https://github.com/jchown/tig-docs/blob/main/COMMITS.md), "Device keys"). The
+pseudonymous identity (see [`COMMITS.md`](https://github.com/TiG-DB/tig-docs/blob/main/COMMITS.md), "Device keys"). The
 repository's first commit lists it in `.tig/allowed_signers`, and the agent signs each commit through `ssh-keygen -Y sign -n
 git`, so anyone with a clone can run `git -c gpg.ssh.allowedSignersFile=.tig/allowed_signers log --show-signature`. A
 repository made by an earlier, unsigned agent gains the file in a signed "Add device key" commit at the next commit; the history
@@ -68,7 +68,7 @@ never reads files in it.
 
 ### What it records
 
-The repository uses the [`tig-device/1`](https://github.com/jchown/tig-docs/blob/main/vocabularies/DEVICE.md) vocabulary.
+The repository uses the [`tig-device/1`](https://github.com/TiG-DB/tig-docs/blob/main/vocabularies/DEVICE.md) vocabulary.
 It describes the device, not its owner: model and serial numbers and MAC addresses are recorded, but IP addresses,
 the hostname, network names, user accounts and files are not, since the repository may be shown to a future owner.
 
@@ -114,7 +114,7 @@ one (e.g. macOS during development) leaves nothing behind.
 
 Optional, and off until `docker_host` is set. The agent reads containers that Docker Compose made from the Docker Engine API and
 records them following the "Compose stacks" section of
-[`DEVICE.md`](https://github.com/jchown/tig-docs/blob/main/vocabularies/DEVICE.md):
+[`DEVICE.md`](https://github.com/TiG-DB/tig-docs/blob/main/vocabularies/DEVICE.md):
 
 - **State and events.** Each Compose project is an item `stack/<project>` and each replica of a service is `container/<project>/<service>/<n>`,
   with its `image`, image `digest` and `created` time. When the setting is first turned on, what is already running is
@@ -218,7 +218,7 @@ This is needed once. After it, updates are automatic.
 1. **Install the latest release.** From a machine with `gh`:
 
    ```sh
-   gh release download --repo jchown/tig-agent --pattern '*.deb'
+   gh release download --repo TiG-DB/tig-agent --pattern '*.deb'
    scp tig-agent_*.deb server:
    ssh server sudo apt install ./tig-agent_*.deb
    ```
@@ -226,7 +226,7 @@ This is needed once. After it, updates are automatic.
    The agent starts at once and records locally.
 
 2. **Let the updater read releases.** Create a
-   [fine-grained token](https://github.com/settings/personal-access-tokens/new) with access to `jchown/tig-agent` only and
+   [fine-grained token](https://github.com/settings/personal-access-tokens/new) with access to `TiG-DB/tig-agent` only and
    *Contents: read-only*. Then on the server:
 
    ```sh
@@ -280,7 +280,7 @@ Durations are a positive integer followed by `s`, `m`, `h` or `d`. Unknown setti
 ## Development
 
 ```sh
-git clone --recurse-submodules git@github.com:jchown/tig-agent.git
+git clone --recurse-submodules git@github.com:TiG-DB/tig-agent.git
 cd tig-agent
 cmake -S . -B build
 cmake --build build
