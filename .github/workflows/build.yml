@@ -26,18 +26,11 @@ jobs:
             build-essential cmake git openssh-client ca-certificates dpkg-dev file curl python3
 
       - uses: actions/checkout@v7
+        with:
+          submodules: true
 
-      # tig-lib is private, so it is fetched with a read-only deploy key rather than the workflow token
-      - name: Fetch tig-lib
-        env:
-          TIG_LIB_DEPLOY_KEY: ${{ secrets.TIG_LIB_DEPLOY_KEY }}
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          key=$(mktemp)
-          printf '%s\n' "$TIG_LIB_DEPLOY_KEY" >"$key"
-          git -c core.sshCommand="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-            submodule update --init external/tig-lib
-          rm -f "$key"
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Configure
         run: |

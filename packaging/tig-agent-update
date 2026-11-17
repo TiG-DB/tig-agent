@@ -1,6 +1,7 @@
 #!/bin/bash
 # Installs the latest tig-agent release from GitHub, and rolls back if it fails its health check.
-# Run by tig-agent-update.timer; GITHUB_TOKEN comes from /etc/tig-agent/update.env.
+# Run by tig-agent-update.timer. The release repository is public; an optional GITHUB_TOKEN from
+# /etc/tig-agent/update.env raises the API rate limit.
 set -euo pipefail
 
 repo=${TIG_AGENT_RELEASE_REPO:-TiG-DB/tig-agent}
@@ -14,14 +15,13 @@ log() {
   echo "$*" >&2
 }
 
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  log "GITHUB_TOKEN is not set: add a read-only token for $repo to /etc/tig-agent/update.env"
-  exit 1
-fi
-
 github() {
+  local auth=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  fi
   curl --fail --silent --show-error --location --max-time 120 \
-    -H "Authorization: Bearer $GITHUB_TOKEN" -H "X-GitHub-Api-Version: 2022-11-28" "$@"
+    "${auth[@]}" -H "X-GitHub-Api-Version: 2022-11-28" "$@"
 }
 
 # a release's title is the package version, e.g. 0.1.0+42.1a2b3c4

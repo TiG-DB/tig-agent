@@ -168,7 +168,6 @@ loopback interface, so nothing else on the network can reach it.
 
 ```
 /etc/tig-agent/agent.conf        configuration (a dpkg conffile, so upgrades keep your edits)
-/etc/tig-agent/update.env        GITHUB_TOKEN for the updater (you create this)
 /var/lib/tig/repository/         the TiG repository
 /var/lib/tig/keys/               device key, deploy key and pinned known_hosts
 /etc/tig-agent/product_serial    the device's serial number, copied from DMI by the install script
@@ -197,8 +196,7 @@ server: tig-agent-update.timer (every 2 min) ◄── poll latest release ◄�
 ```
 
 **Build** (`.github/workflows/build.yml`). Runs in an `ubuntu:22.04` container on every push and pull request, so the package
-runs on Ubuntu 22.04+ and Debian 12+. The private `tig-lib` submodule is fetched with a read-only deploy key
-(`TIG_LIB_DEPLOY_KEY` secret). The package version is `0.2.0+<run number>.<commit>`, which `dpkg` orders correctly.
+runs on Ubuntu 22.04+ and Debian 12+. The package version is `0.2.0+<run number>.<commit>`, which `dpkg` orders correctly.
 
 **Release.** On `main` only. `SHA256SUMS` is signed with `ssh-keygen -Y sign` using the release key (`RELEASE_SIGNING_KEY`
 secret). Its public half is [`packaging/release-signers`](packaging/release-signers) and is installed with the package, so each
@@ -225,29 +223,17 @@ This is needed once. After it, updates are automatic.
 
    The agent starts at once and records locally.
 
-2. **Let the updater read releases.** Create a
-   [fine-grained token](https://github.com/settings/personal-access-tokens/new) with access to `TiG-DB/tig-agent` only and
-   *Contents: read-only*. Then on the server:
-
-   ```sh
-   sudo install -m 600 /dev/null /etc/tig-agent/update.env
-   echo 'GITHUB_TOKEN=github_pat_...' | sudo tee /etc/tig-agent/update.env >/dev/null
-   ```
-
-   Fine-grained tokens expire, at most a year after they're created. When one does, the updater logs an error and keeps the
-   installed version running.
-
-3. **Give the agent somewhere to push.** Show the deploy key and add it to the data repository with write access:
+2. **Give the agent somewhere to push.** Show the deploy key and add it to the data repository with write access:
 
    ```sh
    ssh server sudo -u tig tig-agent status | awk '/^deploy key/ {print $3, $4, $5}' >deploy_key.pub
-   gh repo deploy-key add deploy_key.pub --repo jchown/tig-homeserver --allow-write --title "tig-agent@server"
+   gh repo deploy-key add deploy_key.pub --repo you/machine --allow-write --title "tig-agent@server"
    ```
 
-   Then set `remote = git@github.com:jchown/tig-homeserver.git` in `/etc/tig-agent/agent.conf` and run
+   Then set `remote = git@github.com:you/machine.git` in `/etc/tig-agent/agent.conf` and run
    `sudo systemctl restart tig-agentd`. The agent pushes immediately on start.
 
-4. **Check it.**
+3. **Check it.**
 
    ```sh
    sudo -u tig tig-agent status
