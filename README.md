@@ -332,3 +332,11 @@ tests/           unit tests, end_to_end.sh, and end_to_end_docker.sh with its fa
 - **TiG Notary.** No signature tags yet, so the repository proves which device wrote it but not when.
   When it arrives, the push must include `refs/tags/tig/sig/*`.
 - **TiG clock.** Readings and events use the system clock, without the notary offset.
+
+## Licence
+
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE).
+
+The names "TiG" and "TiG Notary" and the TiG logos are not covered by that
+licence and may not be used without permission, except to say accurately that your
+work is compatible with TiG.
