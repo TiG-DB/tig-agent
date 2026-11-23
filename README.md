@@ -214,7 +214,8 @@ server: tig-agent-update.timer (every 2 min) ◄── poll latest release ◄�
 ```
 
 **Build** (`.github/workflows/build.yml`). Runs in an `ubuntu:22.04` container on every push and pull request, so the package
-runs on Ubuntu 22.04+ and Debian 12+. The package version is `0.2.0+<run number>.<commit>`, which `dpkg` orders correctly.
+runs on Ubuntu 22.04+ and Debian 12+. The package version is `<version>+<run number>.<commit>`, where `<version>` is the one in
+`CMakeLists.txt`, which `dpkg` orders correctly.
 
 **Release.** On `main` only. `SHA256SUMS` is signed with `ssh-keygen -Y sign` using the release key (`RELEASE_SIGNING_KEY`
 secret). Its public half is [`packaging/release-signers`](packaging/release-signers) and is installed with the package, so each
