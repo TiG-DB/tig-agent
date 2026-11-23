@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(
   tig-agent
-  VERSION 0.3.0
+  VERSION 0.4.0
   DESCRIPTION "Records a machine's timeline into a TiG repository"
   LANGUAGES C
 )
@@ -117,6 +117,12 @@ if(TIG_AGENT_BUILD_TESTS)
     NAME tig-agent-end-to-end
     COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/end_to_end.sh" "$<TARGET_FILE:tig-agent>"
   )
+
+  add_test(
+    NAME tig-agent-updater
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/updater_test.sh" "${CMAKE_CURRENT_SOURCE_DIR}/packaging/tig-agent-update"
+  )
+  set_tests_properties(tig-agent-updater PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # Packaging. Only the "agent" component is packaged, which leaves out libtig's and libgit2's install rules.

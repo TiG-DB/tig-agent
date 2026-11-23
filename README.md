@@ -214,7 +214,8 @@ server: tig-agent-update.timer (every 2 min) ◄── poll latest release ◄�
 ```
 
 **Build** (`.github/workflows/build.yml`). Runs in an `ubuntu:22.04` container on every push and pull request, so the package
-runs on Ubuntu 22.04+ and Debian 12+. The package version is `0.2.0+<run number>.<commit>`, which `dpkg` orders correctly.
+runs on Ubuntu 22.04+ and Debian 12+. The package version is `<version>+<run number>.<commit>`, where `<version>` is the one in
+`CMakeLists.txt`, which `dpkg` orders correctly.
 
 **Release.** On `main` only. `SHA256SUMS` is signed with `ssh-keygen -Y sign` using the release key (`RELEASE_SIGNING_KEY`
 secret). Its public half is [`packaging/release-signers`](packaging/release-signers) and is installed with the package, so each
@@ -222,7 +223,9 @@ release is verified with the key from the one before it. To rotate the key, ship
 signed with the old one, then change the secret.
 
 **Updater** ([`packaging/tig-agent-update`](packaging/tig-agent-update)). A small bash script, run as root by a systemd timer,
-and shipped in the package so it updates itself. It needs `curl` and `jq`, both declared as dependencies.
+and shipped in the package so it updates itself. It needs `curl` and `jq`, both declared as dependencies. The release repository
+is public, so it needs no credentials. A `GITHUB_TOKEN` in `/etc/tig-agent/update.env` only raises the API rate limit, and one
+that GitHub refuses is dropped for that run, with the reason in `journalctl -u tig-agent-update`.
 
 **The .deb** declares its dependencies (`git`, `openssh-client`, `curl`, `jq`, `adduser`), creates the `tig` user, and enables
 `tig-agentd.service` and `tig-agent-update.timer`.
