@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs the latest tig-agent release from GitHub, and rolls back if it fails its health check.
 # Run by tig-agent-update.timer. The release repository is public; an optional GITHUB_TOKEN from
-# /etc/tig-agent/update.env raises the API rate limit.
+# /etc/tig-agent/update.env raises the API rate limit, and is ignored if GitHub refuses it.
 set -euo pipefail
 
 repo=${TIG_AGENT_RELEASE_REPO:-TiG-DB/tig-agent}
@@ -11,21 +11,51 @@ state=/var/lib/tig-agent-update
 api=https://api.github.com/repos/$repo
 health_delay=${TIG_AGENT_HEALTH_DELAY:-30}
 
+use_token=1
+
 log() {
   echo "$*" >&2
 }
 
-github() {
-  local auth=()
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
-    auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
-  fi
-  curl --fail --silent --show-error --location --max-time 120 \
-    "${auth[@]}" -H "X-GitHub-Api-Version: 2022-11-28" "$@"
+# GitHub's explanation of a failed request, from the body it saved
+reason() {
+  { jq -r '.message // empty' "$1" 2>/dev/null | head -c 200; } || true
 }
 
+# github <url> <file> [curl option...]: saves the response body to <file>. The release repository is public, so a
+# GITHUB_TOKEN that GitHub refuses (expired, revoked, or barred by an organisation's token policy) is dropped for the rest
+# of the run instead of stopping updates. Any other failure says what GitHub answered, which curl --fail would hide.
+github() {
+  local url=$1 out=$2 status
+  shift 2
+  while :; do
+    local auth=()
+    if [ "$use_token" = 1 ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+      auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    fi
+    status=$(curl --silent --show-error --location --max-time 120 --output "$out" --write-out '%{http_code}' \
+      ${auth[@]+"${auth[@]}"} -H "X-GitHub-Api-Version: 2022-11-28" "$@" "$url")
+    case $status in
+      2??) return 0 ;;
+      401 | 403)
+        if [ ${#auth[@]} -gt 0 ]; then
+          log "GitHub refused GITHUB_TOKEN ($status: $(reason "$out")), so trying without it"
+          use_token=0
+          continue
+        fi
+        ;;
+    esac
+    log "GitHub answered $status for $url: $(reason "$out")"
+    return 1
+  done
+}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
 # a release's title is the package version, e.g. 0.1.0+42.1a2b3c4
-release=$(github "$api/releases/latest")
+github "$api/releases/latest" "$work/release.json"
+release=$(<"$work/release.json")
 version=$(jq -r '.name' <<<"$release")
 current=$(dpkg-query -W -f='${Version}' tig-agent 2>/dev/null || echo 0)
 arch=$(dpkg --print-architecture)
@@ -37,9 +67,6 @@ if grep -qxF "$version" "$state/bad-versions" 2>/dev/null; then
   exit 0
 fi
 
-work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
-
 download() {
   local id
   id=$(jq -r --arg name "$1" '.assets[] | select(.name == $name) | .id' <<<"$release")
@@ -47,7 +74,7 @@ download() {
     log "release $version has no $1"
     exit 1
   fi
-  github -H "Accept: application/octet-stream" -o "$work/$1" "$api/releases/assets/$id"
+  github "$api/releases/assets/$id" "$work/$1" -H "Accept: application/octet-stream"
 }
 
 deb=tig-agent_${version}_${arch}.deb

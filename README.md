@@ -222,7 +222,9 @@ release is verified with the key from the one before it. To rotate the key, ship
 signed with the old one, then change the secret.
 
 **Updater** ([`packaging/tig-agent-update`](packaging/tig-agent-update)). A small bash script, run as root by a systemd timer,
-and shipped in the package so it updates itself. It needs `curl` and `jq`, both declared as dependencies.
+and shipped in the package so it updates itself. It needs `curl` and `jq`, both declared as dependencies. The release repository
+is public, so it needs no credentials. A `GITHUB_TOKEN` in `/etc/tig-agent/update.env` only raises the API rate limit, and one
+that GitHub refuses is dropped for that run, with the reason in `journalctl -u tig-agent-update`.
 
 **The .deb** declares its dependencies (`git`, `openssh-client`, `curl`, `jq`, `adduser`), creates the `tig` user, and enables
 `tig-agentd.service` and `tig-agent-update.timer`.
