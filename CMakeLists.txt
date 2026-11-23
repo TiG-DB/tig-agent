@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(
   tig-agent
-  VERSION 0.2.1
+  VERSION 0.3.0
   DESCRIPTION "Records a machine's timeline into a TiG repository"
   LANGUAGES C
 )
@@ -48,6 +48,7 @@ add_library(
   src/actions.c
   src/config.c
   src/log.c
+  src/notary.c
   src/process.c
   src/repository.c
   src/status.c
@@ -90,6 +91,11 @@ if(TIG_AGENT_BUILD_TESTS)
   target_compile_definitions(tig-agent-record-test PRIVATE _DEFAULT_SOURCE)
   add_test(NAME tig-agent-record-test COMMAND tig-agent-record-test)
 
+  add_executable(tig-agent-notary-test tests/notary_test.c)
+  target_link_libraries(tig-agent-notary-test PRIVATE tig-agent-core)
+  target_compile_definitions(tig-agent-notary-test PRIVATE _DEFAULT_SOURCE)
+  add_test(NAME tig-agent-notary-test COMMAND tig-agent-notary-test)
+
   add_executable(tig-agent-docker-test tests/docker_test.c)
   target_link_libraries(tig-agent-docker-test PRIVATE tig-agent-core)
   target_compile_definitions(tig-agent-docker-test PRIVATE _DEFAULT_SOURCE)
@@ -100,6 +106,12 @@ if(TIG_AGENT_BUILD_TESTS)
     COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/end_to_end_docker.sh" "$<TARGET_FILE:tig-agent>"
   )
   set_tests_properties(tig-agent-end-to-end-docker PROPERTIES SKIP_RETURN_CODE 77)
+
+  add_test(
+    NAME tig-agent-end-to-end-notary
+    COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/tests/end_to_end_notary.sh" "$<TARGET_FILE:tig-agent>"
+  )
+  set_tests_properties(tig-agent-end-to-end-notary PROPERTIES SKIP_RETURN_CODE 77)
 
   add_test(
     NAME tig-agent-end-to-end

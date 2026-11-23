@@ -33,6 +33,10 @@ int agent_status_load(const agent_config *config, agent_status *status) {
       status->last_push = value;
     } else if (sscanf(line, "last_push_result=%15s", status->last_push_result) == 1) {
       /* read */
+    } else if (sscanf(line, "last_sign=%lld", &value) == 1) {
+      status->last_sign = value;
+    } else if (sscanf(line, "last_sign_result=%15s", status->last_sign_result) == 1) {
+      /* read */
     } else if (sscanf(line, "last_compare=%lld", &value) == 1) {
       status->last_compare = value;
     } else if (sscanf(line, "docker_baseline=%lld", &value) == 1) {
@@ -66,6 +70,7 @@ int agent_status_save(const agent_config *config, const agent_status *status) {
           (long long)status->last_push, status->last_push_result);
   fprintf(file, "last_compare=%lld\nlast_compare_boot=%s\ndocker_baseline=%d\n", (long long)status->last_compare,
           status->last_compare_boot, status->docker_baseline);
+  fprintf(file, "last_sign=%lld\nlast_sign_result=%s\n", (long long)status->last_sign, status->last_sign_result);
   if (fclose(file) != 0 || rename(temporary, path) != 0) {
     agent_log_error("%s: %s", path, strerror(errno));
     return -1;
@@ -145,6 +150,13 @@ int agent_status_print(const agent_config *config) {
   if (status.last_push_result[0] != '\0') {
     printf("%-14s%s%s\n", "push result", status.last_push_result,
            strcmp(status.last_push_result, "rejected") == 0 ? " (paused: run `tig-agent push` once resolved)" : "");
+  }
+  if (config->notary[0] != '\0') {
+    printf("%-14s%s (issuer %s)\n", "notary", config->notary, config->issuer);
+    agent_print_time("last sign", status.last_sign);
+    if (status.last_sign_result[0] != '\0') {
+      printf("%-14s%s\n", "sign result", status.last_sign_result);
+    }
   }
   printf("%-14s%s\n", "device", have_device ? device.fingerprint : "(missing: run tig-agent init)");
   agent_print_file("deploy key", key_path);

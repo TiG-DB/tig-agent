@@ -22,6 +22,9 @@ typedef struct agent_config {
   char remote[1024]; /* empty: never push */
   char docker_host[256]; /* unix:///path or http://host:port of a Docker Engine API; empty: not recorded */
   int docker_versions;   /* look container images' versions up on Docker Hub (docker_versions = hub) */
+  char notary[256];      /* TiG Notary's URL, e.g. https://notary.tigdb.org; empty: never ask for signatures */
+  char issuer[256];      /* the hostname that publishes the notary's keys (COMMITS.md, "Public keys") */
+  char issuer_keys[512]; /* where it publishes them, if not https://<issuer>/.well-known/tig-public-key */
   int64_t sample_interval_ms;
   int64_t commit_interval_ms;
   int64_t push_interval_ms;
@@ -39,6 +42,8 @@ typedef struct agent_status {
   int64_t last_push_attempt;
   int64_t last_push;
   char last_push_result[16]; /* ok, failed, rejected or skipped */
+  int64_t last_sign;         /* when TiG Notary last signed a commit */
+  char last_sign_result[16]; /* ok, current, failed or skipped */
   int64_t last_compare;      /* when the device was last compared with its state */
   char last_compare_boot[AGENT_BOOT_ID_MAX]; /* the boot that comparison was in */
   int docker_baseline;       /* Docker was read at the last comparison, even if it had no stacks */
@@ -72,6 +77,7 @@ typedef struct agent_device {
   char key_path[AGENT_PATH_MAX];
   char work_dir[AGENT_PATH_MAX]; /* for the files ssh-keygen signs */
   char fingerprint[128];         /* SHA256:..., as ssh-keygen -l prints it */
+  char public_key[1024];         /* ssh-ed25519 AAAA..., with no comment */
   char allowed_signer[1024];     /* the key's line in .tig/allowed_signers */
   tig_device device;             /* signs through ssh-keygen; points into this struct */
 } agent_device;
@@ -79,6 +85,8 @@ typedef struct agent_device {
 /* device.c */
 int agent_create_device_key(const char *path);
 int agent_device_load(const agent_config *config, agent_device *device);
+/* reads up to size - 1 bytes of a file into buffer and ends it with a NUL; returns the length, or -1 */
+long agent_read_file(const char *path, char *buffer, size_t size);
 
 /* repository.c: with a device, commits are signed, and unsigned history gains the key first */
 int  agent_setup(const agent_config *config);
@@ -165,6 +173,29 @@ int       agent_record(tig_repository *repository, const agent_observation *obse
 tig_node *agent_diff(const tig_node *state_items, const tig_node *observed);
 /* as agent_diff; without include_docker, stacks and containers are not compared */
 tig_node *agent_diff_with(const tig_node *state_items, const tig_node *observed, int include_docker);
+
+/* notary.c: signature tags from TiG Notary (COMMITS.md, "Signing"). Signing is best effort: a commit that couldn't be
+   signed is signed at the next sync, since a signature covers all earlier history. */
+typedef enum agent_sign_result {
+  AGENT_SIGN_OK,      /* the latest commit now has a new signature tag */
+  AGENT_SIGN_CURRENT, /* the latest commit was already signed */
+  AGENT_SIGN_SKIPPED, /* no notary is configured */
+  AGENT_SIGN_FAILED
+} agent_sign_result;
+
+agent_sign_result agent_notary_sign(const agent_config *config);
+/* checks a tag the notary returned, as COMMITS.md, "Response", asks the client to before storing it: that it is a tag
+   of the requested commit, named for its own time, from the issuer and for this device. On success *name is the
+   tag's name, e.g. tig/sig/20261020T140000Z. The signature is checked separately, by Git. */
+int agent_notary_check_tag(const char *tag, const char *commit, const char *issuer, const char *device, char *name,
+                           size_t name_size);
+/* UNIX seconds from an HTTP Date header's value, e.g. "Tue, 20 Oct 2026 14:00:00 GMT"; -1 if it isn't one */
+int64_t agent_http_date(const char *text);
+/* whether a notary or keys URL is acceptable: https, or http to this machine, with nothing in it a shell or curl
+   would treat specially, and no credentials */
+int agent_notary_url_ok(const char *url);
+/* whether text is an Internet hostname, such as an issuer */
+int agent_hostname_ok(const char *text);
 
 /* sync.c */
 int               agent_configure_remote(const agent_config *config);

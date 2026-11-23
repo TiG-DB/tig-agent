@@ -68,7 +68,8 @@ static int agent_push_was_rejected(const char *output) {
   return strncmp(output, "!\t", 2) == 0 || strstr(output, "\n!\t") != 0;
 }
 
-/* pushes HEAD to main, fast-forward only: TiG history is never force-pushed */
+/* pushes HEAD to main, fast-forward only: TiG history is never force-pushed. The notary's signature tags go with it
+   (COMMITS.md, "Signing"); they are only ever added, and a tag that is already there is left as it is. */
 agent_push_result agent_push(const agent_config *config) {
   char repository_path[AGENT_PATH_MAX];
   char key_path[AGENT_PATH_MAX];
@@ -101,7 +102,10 @@ agent_push_result agent_push(const agent_config *config) {
 
   {
     const char *env[] = {"GIT_TERMINAL_PROMPT=0", ssh_command, 0};
-    const char *argv[] = {"git", "-C", repository_path, "push", "--porcelain", "origin", "HEAD:refs/heads/main", 0};
+    const char *argv[] = {"git", "-C", repository_path, "push",
+                          "--porcelain",           "origin",
+                          "HEAD:refs/heads/main",  "refs/tags/tig/sig/*:refs/tags/tig/sig/*",
+                          0};
 
     status = agent_run(argv, env, output, sizeof(output), AGENT_PUSH_TIMEOUT);
   }
