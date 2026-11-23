@@ -15,12 +15,14 @@ tig-agentd (systemd service, user "tig")
   every 60s   sample  ──► tig_telemetry_append  ──► working tree of /var/lib/tig/repository
   every 15m   compare ──► tig_event_add         ──► working tree (only when something changed)
               commit  ──► tig_repository_commit ──► local commits
-  every 1h    push    ──► git push origin HEAD:main, fast-forward only ──► any Git remote
+  every 1h    sign    ──► TiG Notary signs the latest commit ──► refs/tags/tig/sig/<time>     (if a notary is set)
+              push    ──► git push origin HEAD:main, fast-forward only ──► any Git remote
 ```
 
 **One binary.** `tig-agent` is a C99 program that links `libtig` statically, with a pinned libgit2 built in, so the only
 runtime library it needs is libc. `tig-agent daemon` is the service; the other commands (`init`, `collect`, `commit`, `push`,
-`status`) do one step by hand and are what the daemon calls internally.
+`status`) do one step by hand and are what the daemon calls internally. `push` commits, has the notary sign (if one is set),
+then pushes.
 
 **Three cadences.** Following [`TELEMETRY.md`](https://github.com/TiG-DB/tig-docs/blob/main/TELEMETRY.md), sampling,
 committing and pushing run at different rates. Readings are written to the working tree as soon as they are sampled, so a crash
@@ -53,6 +55,22 @@ git`, so anyone with a clone can run `git -c gpg.ssh.allowedSignersFile=.tig/all
 repository made by an earlier, unsigned agent gains the file in a signed "Add device key" commit at the next commit; the history
 before it stays unsigned. Losing the device key means starting a new repository, because the agent won't sign with a key the
 file doesn't list.
+
+**Signed by TiG Notary, when asked to.** A device key shows which device wrote a commit, but not when. With `notary` set, each
+sync (hourly by default) first asks the notary to sign the latest commit, as [`COMMITS.md`](https://github.com/TiG-DB/tig-docs/blob/main/COMMITS.md)
+("Signing") describes: the agent sends the commit's hash, the time and the device's public key, signed with the device key, and
+gets back a signed Git tag, which says the commit and all its history existed no later than the tag's time. The notary never
+sees the repository. The agent checks the tag before it keeps it (it is for that commit, that device and the configured
+`issuer`, named for its own time, and its signature verifies against the keys the issuer publishes at
+`https://<issuer>/.well-known/tig-public-key`), stores it as `refs/tags/tig/sig/<time>` and pushes it with the commits. The
+published keys are kept in `/var/lib/tig/notary/` and fetched again when a tag doesn't verify against them, e.g. after the
+notary changes key. A commit that is already signed isn't signed again.
+
+Signing is best effort. If the notary is down, rate limiting or unreachable, the agent logs it, shows it in `tig-agent status`
+and pushes anyway; the next sync signs the latest commit, which covers everything committed meanwhile. If the device's
+clock is out by more than the notary allows, the notary says so and the agent asks again with the notary's time. It is off
+unless `notary` is set, because the request tells the notary the device's public key and its address, and the commit's hash.
+Verifying needs only Git: `git -c gpg.ssh.allowedSignersFile=<published keys> verify-tag <tag>`.
 
 **The config file is the source of truth.** `/etc/tig-agent/agent.conf` names the remote, and the agent makes the repository's
 `origin` match it at start-up and before each push. Removing the remote keeps the repository local.
@@ -128,8 +146,8 @@ records them following the "Compose stacks" section of
   agent asks Docker Hub for the tags that share the digest of the image the container runs, and records the most specific
   release among them (e.g. `19.5.5-ce.0` for `gitlab/gitlab-ce:latest`) as `version` beside `image` and `digest`, so an
   `upgraded` event shows `19.5.4-ce.0` becoming `19.5.5-ce.0`. Labels in the image are not used, because they are
-  inherited from its base image (GitLab's say Ubuntu's 24.04). It is off by default: it is the only thing the agent
-  requests from the Internet, and it tells Docker Hub which public images the machine runs. Only Docker Hub images are
+  inherited from its base image (GitLab's say Ubuntu's 24.04). It is off by default: apart from TiG Notary it is the only
+  thing the agent requests from the Internet, and it tells Docker Hub which public images the machine runs. Only Docker Hub images are
   looked up, by name; ones from other registries or built locally get no `version`, and neither does an image whose
   tags Hub lists beyond the 500 most recent. Answers are kept while the agent runs, an image with none is asked about
   again after an hour, and a version that can't be found now never removes one already recorded for the same image. On
@@ -255,6 +273,9 @@ update keeps the previous package.
 | `remote` | *(empty)* | Git remote to push to. Empty keeps the repository local. |
 | `docker_host` | *(empty)* | Docker Engine API to record Compose stacks from: `unix:///path` or `http://host:port`. Empty records nothing about Docker. |
 | `docker_versions` | *(empty)* | `hub` to name the release behind image tags such as `latest` from Docker Hub. Empty or `off` asks nothing. |
+| `notary` | *(empty)* | TiG Notary's URL, e.g. `https://notary.tigdb.org`, to have each sync's latest commit signed. Empty asks for no signatures. Must be `https`, or `http` to this machine. |
+| `issuer` | `tigdb.org` | The hostname that publishes the notary's keys, which a signature is checked against. Only used with `notary`. |
+| `issuer_keys` | *(empty)* | Where the issuer publishes its keys if not `https://<issuer>/.well-known/tig-public-key`. Same rules as `notary`. |
 | `sample_interval` | `60s` | How often telemetry is sampled. |
 | `commit_interval` | `15m` | How often readings are committed. |
 | `push_interval` | `1h` | How often commits are pushed (each push commits first). |
@@ -283,6 +304,9 @@ init with its initial state, discovery and boot events, collect, push, a second 
 diverged, which must be refused and left untouched. A second script runs it against a fake Docker Engine API (it needs
 `python3`, and is skipped without it): stacks found at install, a container upgraded and another removed, Docker going away,
 and stacks turned on in a repository that already has its discovery. It also checks that no configuration reaches the events.
+A third runs it against a fake TiG Notary and its published keys (also `python3`): signatures made and pushed, nothing signed
+twice, a notary that is down, rate limiting or ahead of the device's clock, tags that must be refused (another issuer, a key
+that isn't published, a key published for another principal), and a notary that changes key.
 
 `tig-lib` is a submodule in `external/tig-lib`. To pick up library changes, commit them there, then update the submodule here
 in the same pull request as the agent changes that need them.
@@ -297,7 +321,8 @@ src/
   inventory.c    the device's components, from the Linux sources in DEVICE.md
   record.c       initial state, discovery, boot and change events
   sha256.c       hashed item IDs
-  sync.c         origin and `git push`
+  sync.c         origin and `git push`, which also sends the signature tags
+  notary.c       asking TiG Notary to sign a commit, checking the tag it returns and storing it
   repository.c   first-run setup, deploy key, lock
   device.c       device key and commit signing through ssh-keygen
   status.c       status file and `tig-agent status`
@@ -305,7 +330,8 @@ src/
   process.c      running git and ssh-keygen with a timeout
   log.c          stderr logging with journald priorities
 packaging/       agent.conf, systemd units, maintainer scripts, updater and release key
-tests/           unit tests, end_to_end.sh, and end_to_end_docker.sh with its fake Docker API (fake_docker.py)
+tests/           unit tests, end_to_end.sh, end_to_end_docker.sh with its fake Docker API (fake_docker.py) and
+                 end_to_end_notary.sh with a fake notary (fake_notary.py)
 ```
 
 ## Not yet implemented
@@ -315,9 +341,12 @@ tests/           unit tests, end_to_end.sh, and end_to_end_docker.sh with its fa
 - **More components and packages.** Memory modules, graphics cards and installed packages are open questions in
   `DEVICE.md`.
 - **Telemetry for other filesystems.** Only `filesystem.root` is sampled, though `DEVICE.md` names a stream for each.
-- **TiG Notary.** No signature tags yet, so the repository proves which device wrote it but not when.
-  When it arrives, the push must include `refs/tags/tig/sig/*`.
-- **TiG clock.** Readings and events use the system clock, without the notary offset.
+- **TiG clock.** Readings and events use the system clock, without the offset measured against the notary. The agent
+  uses the notary's time only to make a signing request that the notary has said is too far out.
+- **Verifying a repository.** The agent checks each signature as it stores it, but doesn't yet check a whole history
+  (`COMMITS.md`, "Verifying"); `tig-cli` is meant to.
+- **Signing on stopping.** The daemon commits when it stops but doesn't ask for a signature, so that commit is signed at the
+  next sync after it starts.
 
 ## Licence
 

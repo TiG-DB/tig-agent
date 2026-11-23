@@ -22,8 +22,7 @@ int agent_create_device_key(const char *path) {
   return 0;
 }
 
-/* reads up to size - 1 bytes; returns the length, or -1 */
-static long agent_read_file(const char *path, char *buffer, size_t size) {
+long agent_read_file(const char *path, char *buffer, size_t size) {
   FILE *file = fopen(path, "rb");
   size_t length;
 
@@ -101,7 +100,7 @@ static tig_status agent_sign(void *context, const char *content, size_t content_
 
 int agent_device_load(const agent_config *config, agent_device *device) {
   char public_path[AGENT_PATH_MAX];
-  char public_key[1024];
+  char public_line[1024];
   char output[1024];
   const char *argv[] = {"ssh-keygen", "-l", "-E", "sha256", "-f", public_path, 0};
   size_t type_length;
@@ -116,14 +115,14 @@ int agent_device_load(const agent_config *config, agent_device *device) {
   }
 
   /* "ssh-ed25519 AAAA... comment": the allowed signers line takes the type and key, without the comment */
-  if (agent_read_file(public_path, public_key, sizeof(public_key)) <= 0) {
+  if (agent_read_file(public_path, public_line, sizeof(public_line)) <= 0) {
     agent_log_error("cannot read the device key %s (run tig-agent init first)", public_path);
     return -1;
   }
-  type_length = strcspn(public_key, " ");
-  key = public_key + type_length + (public_key[type_length] == ' ');
+  type_length = strcspn(public_line, " ");
+  key = public_line + type_length + (public_line[type_length] == ' ');
   key_length = strcspn(key, " \t\r\n");
-  if (strncmp(public_key, "ssh-ed25519 ", 12) != 0 || key_length == 0) {
+  if (strncmp(public_line, "ssh-ed25519 ", 12) != 0 || key_length == 0) {
     agent_log_error("%s: not an Ed25519 public key", public_path);
     return -1;
   }
@@ -136,8 +135,9 @@ int agent_device_load(const agent_config *config, agent_device *device) {
     return -1;
   }
 
-  if (snprintf(device->allowed_signer, sizeof(device->allowed_signer), "%s namespaces=\"git\" ssh-ed25519 %s",
-               device->fingerprint, key) >= (int)sizeof(device->allowed_signer)) {
+  if (snprintf(device->public_key, sizeof(device->public_key), "ssh-ed25519 %s", key) >= (int)sizeof(device->public_key) ||
+      snprintf(device->allowed_signer, sizeof(device->allowed_signer), "%s namespaces=\"git\" %s", device->fingerprint,
+               device->public_key) >= (int)sizeof(device->allowed_signer)) {
     agent_log_error("%s: key too long", public_path);
     return -1;
   }

@@ -5,6 +5,7 @@
 #include <time.h>
 
 static const char *const agent_push_results[] = {"ok", "skipped", "failed", "rejected"};
+static const char *const agent_sign_results[] = {"ok", "current", "skipped", "failed"};
 
 int agent_collect(const agent_config *config) {
   tig_repository *repository;
@@ -109,10 +110,12 @@ int agent_commit(const agent_config *config) {
   return result;
 }
 
-/* commits, then pushes; a rejected push pauses pushing until retry_rejected is set, e.g. by a manual push */
+/* commits, has TiG Notary sign the commit, then pushes; a rejected push pauses pushing until retry_rejected is set,
+   e.g. by a manual push. A commit the notary can't sign now is signed at the next sync, and is pushed without one. */
 int agent_sync(const agent_config *config, int retry_rejected) {
   agent_status status;
   agent_push_result pushed;
+  agent_sign_result signed_result;
   int lock = agent_lock(config);
 
   if (lock < 0) {
@@ -128,6 +131,12 @@ int agent_sync(const agent_config *config, int retry_rejected) {
     agent_unlock(lock);
     return AGENT_EXIT_PUSH_REJECTED;
   }
+
+  signed_result = agent_notary_sign(config);
+  if (signed_result == AGENT_SIGN_OK) {
+    status.last_sign = (int64_t)time(0);
+  }
+  strcpy(status.last_sign_result, agent_sign_results[signed_result]);
 
   pushed = agent_push(config);
   if (pushed != AGENT_PUSH_SKIPPED) {

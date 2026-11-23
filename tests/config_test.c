@@ -67,8 +67,36 @@ static void test_parse(void) {
   CHECK(agent_config_parse(&config, "push_interval = soon\n", "test") != 0);
 }
 
+static void test_notary(void) {
+  agent_config config;
+
+  agent_config_defaults(&config);
+  CHECK(config.notary[0] == '\0'); /* nothing is sent to a notary unless it is asked for */
+  CHECK(strcmp(config.issuer, "tigdb.org") == 0);
+  CHECK(config.issuer_keys[0] == '\0');
+
+  CHECK(agent_config_parse(&config,
+                           "notary = https://notary.tigdb.org\n"
+                           "issuer = tigdb.org\n"
+                           "issuer_keys = http://127.0.0.1:8080/.well-known/tig-public-key\n",
+                           "test") == 0);
+  CHECK(strcmp(config.notary, "https://notary.tigdb.org") == 0);
+  CHECK(strcmp(config.issuer_keys, "http://127.0.0.1:8080/.well-known/tig-public-key") == 0);
+
+  CHECK(agent_config_parse(&config, "notary =\nissuer_keys =\n", "test") == 0);
+  CHECK(config.notary[0] == '\0' && config.issuer_keys[0] == '\0');
+
+  CHECK(agent_config_parse(&config, "notary = notary.tigdb.org\n", "test") != 0);
+  CHECK(agent_config_parse(&config, "notary = http://notary.example.com\n", "test") != 0);
+  CHECK(agent_config_parse(&config, "notary = https://user:pass@notary.example.com\n", "test") != 0);
+  CHECK(agent_config_parse(&config, "issuer_keys = http://example.com/keys\n", "test") != 0);
+  CHECK(agent_config_parse(&config, "issuer = tigdb.org/keys\n", "test") != 0);
+  CHECK(agent_config_parse(&config, "issuer =\n", "test") != 0);
+}
+
 int main(void) {
   test_durations();
   test_parse();
+  test_notary();
   return failures == 0 ? 0 : 1;
 }

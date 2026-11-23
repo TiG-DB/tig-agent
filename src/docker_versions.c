@@ -4,8 +4,8 @@
    the tags that share the digest of the image a container runs include its release ("19.5.5-ce.0"). Labels in the image
    can't be used instead: they are inherited from its base image, so GitLab would be recorded as Ubuntu's 24.04.
 
-   This is the only thing the agent fetches from the Internet, and it tells Docker Hub which public images the machine
-   runs, so it is off unless the owner turns it on. Only images from Docker Hub are looked up, and only by name. */
+   Apart from signing (notary.c), which is also off unless asked for, this is the only thing the agent fetches from the
+   Internet, and it tells Docker Hub which public images the machine runs, so it is off unless the owner turns it on. Only images from Docker Hub are looked up, and only by name. */
 #include "agent.h"
 
 #include <ctype.h>

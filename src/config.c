@@ -11,6 +11,7 @@
 void agent_config_defaults(agent_config *config) {
   memset(config, 0, sizeof(*config));
   strcpy(config->data_dir, "/var/lib/tig");
+  strcpy(config->issuer, "tigdb.org");
   config->sample_interval_ms = INT64_C(60) * 1000;
   config->commit_interval_ms = INT64_C(15) * 60 * 1000;
   config->push_interval_ms = INT64_C(60) * 60 * 1000;
@@ -110,6 +111,24 @@ static int agent_config_set(agent_config *config, const char *key, const char *v
       return 0;
     }
     return -1;
+  }
+  if (strcmp(key, "notary") == 0) {
+    if (value[0] != '\0' && !agent_notary_url_ok(value)) {
+      return -1;
+    }
+    return agent_copy_value(config->notary, sizeof(config->notary), value);
+  }
+  if (strcmp(key, "issuer") == 0) {
+    if (!agent_hostname_ok(value)) {
+      return -1;
+    }
+    return agent_copy_value(config->issuer, sizeof(config->issuer), value);
+  }
+  if (strcmp(key, "issuer_keys") == 0) {
+    if (value[0] != '\0' && !agent_notary_url_ok(value)) {
+      return -1;
+    }
+    return agent_copy_value(config->issuer_keys, sizeof(config->issuer_keys), value);
   }
   if (strcmp(key, "sample_interval") == 0) {
     return agent_parse_duration(value, &config->sample_interval_ms);
